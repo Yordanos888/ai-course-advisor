@@ -1,0 +1,88 @@
+Course Code,Course Name,Credit Hours,Year Level,Semester Offered,Department Scope,Stream Scope,Prerequisites (Split by commas),Is Droppable
+Phil1009,Logic and Critical Thinking ,3,1,1,Common,Common,None,TRUE
+Psyc1011,General Psychology,3,1,1,Common,Common,None,TRUE
+FLEn1003,Communicative English Language Skills I,3,1,1,Common,Common,None,TRUE
+GeEs1005,Geography of Ethiopia and the Horn,3,1,1,Common,Common,None,TRUE
+Math1007,Mathematics for Natural Science,3,1,1,Common,Common,None,TRUE
+SpSc1013,Physical Fitness,0,1,1,Common,Common,None,TRUE
+Phys1001,General Physics,3,1,1,Common,Common,None,TRUE
+FLEn1004,Communicative English Language Skills II,3,1,2,Common,Common,FLEn1003,TRUE
+MCiE1012,Moral and Civic Education,2,1,2,Common,Common,None,TRUE
+Incl1010,Inclusiveness,2,1,2,Common,Common,None,TRUE
+Anth1002,Social Anthropology,2,1,2,Common,Common,None,TRUE
+Entr1106,Enterpreneurship for Engineers,3,1,2,Common,Common,None,TRUE
+EmTe1108,Emerging Technology for Engineers,3,1,2,Common,Common,None,TRUE
+Math1014,Applied Mathematics IB,4,1,2,Common,Common,Math1007,TRUE
+Econ2009,Economics,3,2,1,Common,Common,None,TRUE
+Comp2003,Introduction to Computer Programming,3,2,1,Common,Common,None,TRUE
+Math2007,Applied Mathematics IIB,4,2,1,Common,Common,Math1014,TRUE
+GLTr2011,Global Trend,2,2,1,Common,Common,None,TRUE
+MEng2101,Engineering Drawing,3,2,1,Common,Common,None,TRUE
+CEng2103,Engineering Mechanics I (Statics),3,2,1,Common,Common,None,TRUE
+ECEg2102,Fundamentals of Electrical Engineering,4,2,2,ECE,Common,Math1014,TRUE
+ECEg2110,Probability and Random Processes,3,2,2,ECE,Common,None,TRUE
+Hist2002,History of Ethiopia and the Horn,3,2,2,ECE,Common,None,TRUE
+Math2042,Applied Mathematics IIIB,4,2,2,ECE,Common,Math2007,TRUE
+MEng2102,Engineering Mechanics II (Dynamics),3,2,2,ECE,Common,CEng2103,TRUE
+MEng2114,Engineering Thermodynamics,3,2,2,ECE,Common,None,TRUE
+ECEg3101,Computational Methods,3,3,1,ECE,Common,"Comp2003, Math2042",TRUE
+ECEg3103,Applied Electronics I,4,3,1,ECE,Common,ECEg2102,TRUE
+ECEg3105,Signals and System Analysis,3,3,1,"ECE, EME",Common,Math2042,TRUE
+ECEg3107,Electromagnetic Fields,3,3,1,ECE,Common,"Math2042, ECEg2102",TRUE
+ECEg3109,Object Oriented Programming,3,3,1,ECE,Common,Comp2003,TRUE
+ECEg3111,Research Methods and Presentation,2,3,1,ECE,Common,None,TRUE
+ECEg3113,Electrical Workshop Practices I,1,3,1,ECE,Common,None,TRUE
+ECEg3102,Applied Electronics II,3,3,2,"ECE, EME",Common,ECEg3103,TRUE
+ECEg3104,Digital Logic Design,4,3,2,ECE,Common,ECEg3103,TRUE
+ECEg3106,Network Analysis and Synthesis,3,3,2,ECE,Common,"ECEg2102, ECEg3105",TRUE
+ECEg3108,Digital Signal Processing,4,3,2,ECE,Common,ECEg3105,TRUE
+ECEg3110,Electrical Machines I,4,3,2,ECE,Common,ECEg3107,TRUE
+ECEg3112,Electrical Workshop Practices II,2,3,2,ECE,Common,ECEg3113,TRUE
+ECEg4101,Intoduction to Communication Systems,3,4,1,ECE,Common,"ECEg2110, ECEg3102, ECEg3105",TRUE
+ECEg4103,Computer Architecture and Organization,3,4,1,ECE,Common,ECEg3104,TRUE
+ECEg4105,Intoduction to Control Systems,3,4,1,ECE,Common,"ECEg3101, ECEg3103",TRUE
+ECEg4107,Electrical Measurement and Instrumentation,3,4,1,"ECE, EME",Common,ECEg2102,TRUE
+ECEg4109,Power Systems I,3,4,1,ECE,Common,ECEg3110,TRUE
+IETP4115,Integrated Engineering team Project,3,4,1,ECE,Common,None,TRUE
+ECEg4102,Microprocessors and Interfacing,4,4,2,ECE,Common,ECEg4103,TRUE
+ECEg4404,Data Structures and Algorithm,4,4,2,"ECE, SE",Computer,Comp2003,TRUE
+ECEg4410,Database Systems,3,4,2,ECE,Computer,ECEg3109,TRUE
+ECEg4406,Data Communications and Computer Networks,4,4,2,ECE,"Computer, Communication",ECEg4101,TRUE
+ECEg4112,Integrated Design Project,3,4,2,ECE,Common,"IETP4115(All); ECEg4101,ECEg4103(Communication,Computer); ECEg4109(Power); ECEg4105(Control)",TRUE
+ECEg4304,Digital Communication Systems,3,4,2,ECE,Communication,ECEg4101,TRUE
+ECEg4308,EM waves and Guide Structures,3,4,2,ECE,Communication,"ECEg3107,  ECEg4101",TRUE
+ECEg4510,Modern Control Systems,3,4,2,ECE,"Control, Power",ECEg4105,TRUE
+ECEg4704,Electrical Machines II,4,4,2,ECE,"Control, Power",ECEg3110,TRUE
+ECEg4506,Process Control Fundamentals,3,4,2,ECE,Control,ECEg4105,TRUE
+ECEg4708,Power Systems II,4,4,2,ECE,Power,ECEg4109,TRUE
+ECEg4100,Industry Internship,6,4,3,Common,Common,None,FALSE
+ECEg5301,Microwave Devices and Systems,3,5,1,ECE,Communication,ECEg4308,TRUE
+ECEg5303,Fiber Optics Communications,3,5,1,ECE,Communication,ECEg4304,TRUE
+ECEg5305,Antennas and Radio Wave Propagation,4,5,1,ECE,Communication,ECEg4308,TRUE
+ECEg5307,Wireless and Mobile Communications,4,5,1,ECE,Communication,ECEg4304,TRUE
+ECEg5605,Microelectronic Devices and Circuits,3,5,1,ECE,Communication,ECEg3102,TRUE
+ECEg5311,Telecommunication Networks,3,5,1,ECE,Communication,ECEg4304,TRUE
+ECEg5409,Software Engineering,3,5,1,"ECE, SE",Computer,ECEg3109,TRUE
+ECEg5401,Operating Systems,3,5,1,ECE,Computer,"ECEg4103, ECEg4404",TRUE
+ECEg5403,Embedded Systems,4,5,1,ECE,Computer,ECEg4102,TRUE
+ECEg5405,VLSI Design,3,5,1,ECE,Computer,ECEg4103,TRUE
+ECEg5407,Introduction to Machine Learning,3,5,1,"ECE, EME",Computer,"ECEg3109, ECEg4404",TRUE
+ECEg5511,Robotics and Computer Vision,3,5,1,ECE,Computer,"MEng2102, ECEg4105",TRUE
+ECEg5701,Power Electronics and Electric Drives,4,5,1,"ECE, EME","Control, Power",ECEg4704,TRUE
+ECEg5705,Electrical Installation,3,5,1,ECE,"Control, Power",ECEg3113,TRUE
+ECEg5507,Digital Control Systems,3,5,1,ECE,Control,ECEg4510,TRUE
+ECEg5509,Industrial Automation,4,5,1,ECE,Control,"ECEg3112, ECEg4102",TRUE
+ECEg5703,Energy Conversion and Rural Electrification,4,5,1,ECE,Power,MEng2114,TRUE
+ECEg5711,Power System Protection,3,5,1,ECE,Power,ECEg4708,TRUE
+ECEg5709,Power Systems Automation,4,5,1,ECE,Power,ECEg4708,TRUE
+ECEg5107,Final year project I,0,5,1,ECE,Common,ECEg4100,FALSE
+ECEg5302,Switching and Intelligent Networks,3,5,2,ECE,Communication,ECEg5311,TRUE
+ECEg5410,Advanced Computer Networks,3,5,2,ECE,Communication,ECEg4406,TRUE
+ECEg5412,Wireless Communications and Mobile Computing,4,5,2,ECE,Computer,ECEg4406,TRUE
+ECEg5402,New Trends in Computer Engineering,2,5,2,ECE,Computer,None,TRUE
+ECEg5502,Instrumentation Engineering,3,5,2,ECE,"Control, Power",ECEg4107,TRUE
+ECEg5510,Artificial Intelligence for Control Engineering,3,5,2,ECE,Control,ECEg5511,TRUE
+ECEg5702,Power Systems Operation and Control,4,5,2,ECE,Power,ECEg4708,TRUE
+IEng5104,Industrial Management and Engineering Economy,3,5,2,ECE,Common,Econ2009,TRUE
+ECEg5108,Final year project II,6,5,2,ECE,Common,"ECEg5107, All Stream Major Courses",FALSE
+NEE5108,National Exit Examination,0,5,2,ECE,Common,All Courses,FALSE
