@@ -8,12 +8,51 @@ from models import (
 Session = sessionmaker(bind=engine)
 session = Session()
 
+
+# ============================================================
+# Shared helpers
+# ============================================================
+
+def _resolve_course_stream_scope(course):
+    """
+    Returns the TRUE set of streams a course belongs to, correctly consulting
+    BOTH tables:
+      - course.stream_id: set when the course belongs to exactly one stream
+      - course_streams: junction table for courses shared by SOME (not all) streams
+    Returns None if the course is genuinely common to every stream, otherwise a
+    set of stream_ids.
+    """
+    if course.stream_id is not None:
+        return {course.stream_id}
+    shared_entries = session.query(CourseStream).filter_by(course_id=course.id).all()
+    if shared_entries:
+        return {e.stream_id for e in shared_entries}
+    return None  # truly common to all streams
+
+
+def _stream_scope_label(course):
+    scope = _resolve_course_stream_scope(course)
+    if scope is None:
+        return "Common (all streams)"
+    names = [session.query(Stream).filter_by(id=sid).first().name for sid in scope]
+    return ", ".join(sorted(names))
+
+
+def _stream_scope_is_relevant(course):
+    """Streams aren't chosen until Year 4 Semester 2 -- showing 'Stream Scope' before
+    that point is meaningless noise, since no student has one to compare against yet."""
+    return course.year_level > 4 or (course.year_level == 4 and course.semester_offered >= 2)
+
+
+# ============================================================
+# Student academic history
+# ============================================================
+
 def get_student_academic_summary(student_id):
     """
-    Helper to fetch a student and return their active state, stream,
-    and dictionary of completed course statuses.
-    Uses explicit ordering by year/semester/attempt so retakes deterministically
-    overwrite older records.
+    Fetches a student and returns their current academic standing and a
+    dictionary of their latest course statuses. Uses explicit ordering by
+    year/semester/attempt so retakes deterministically overwrite older records.
     """
     student = session.query(Student).filter_by(id=student_id).first()
     if not student:
@@ -42,8 +81,7 @@ def get_student_academic_summary(student_id):
         course = session.query(Course).filter_by(id=r.course_id).first()
         if not course:
             continue
-        code = course.course_code.upper()
-        history[code] = r.status.upper()
+        history[course.course_code.upper()] = r.status.upper()
 
     return student, (current_year, current_sem), history
 
@@ -95,20 +133,20 @@ def evaluate_special_requirements(student, course, history):
     return True, []
 
 
-def _stream_scope_is_relevant(course):
-    """Streams aren't chosen until Year 4 Semester 2 -- showing 'Stream Scope' before
-    that point is meaningless noise, since no student has one to compare against yet."""
-    return course.year_level > 4 or (course.year_level == 4 and course.semester_offered >= 2)
-
+# ============================================================
+# Course lookup (no student required)
+# ============================================================
 
 def get_course_details(course_code):
     """
     V1 Core: Retrieves isolated details about a specific course.
-    FIXED: department now shown by name (was showing raw department_id).
-    FIXED: prerequisites now show course NAME alongside code (was code-only).
-    FIXED: stream scope is hidden for courses before streams are actually chosen (Y4S2+).
-    FIXED: special_requirement (ALL_STREAM_COURSES / ALL_COURSES) is now surfaced --
-           previously FYP-II and the Exit Exam showed "None" despite requiring everything.
+    - Department shown by name, not raw ID.
+    - Prerequisites show course NAME alongside code.
+    - Stream scope hidden before streams are actually chosen (Y4S2+).
+    - Stream scope correctly consults course_streams for partial multi-stream sharing,
+      not just course.stream_id.
+    - special_requirement (ALL_STREAM_COURSES / ALL_COURSES) is surfaced as a
+      readable prerequisite entry instead of showing "None".
     """
     course = session.query(Course).filter(Course.course_code.ilike(course_code)).first()
     if not course:
@@ -144,7 +182,7 @@ def get_course_details(course_code):
     }
 
     if _stream_scope_is_relevant(course):
-        result["stream"] = course.stream.name if course.stream else "Common (all streams)"
+        result["stream"] = _stream_scope_label(course)
     else:
         result["stream"] = None  # bot.py should skip this line entirely when None
 
@@ -154,10 +192,11 @@ def get_course_details(course_code):
 def get_downstream_impact(course_code):
     """
     V1 Core: Traces forward cascading blocks if a course is failed/not taken.
-    FIXED: previously treated every prerequisite edge as unconditional, so a
-    stream-conditional prerequisite (e.g. a course required only for Control/Power
-    students' IDP) was wrongly reported as blocking every student. Now tracks and
-    reports which stream(s) each downstream block actually applies to.
+    A downstream course's reported stream-applicability is the INTERSECTION of:
+      1. What the prerequisite edge itself implies (applicable_stream_id)
+      2. What the downstream course's OWN scope is (stream_id / course_streams)
+    This is necessary because a course can be scoped to specific streams via
+    course_streams even when the edge pointing to it has no stream condition.
     """
     target_course = session.query(Course).filter(Course.course_code.ilike(course_code)).first()
     if not target_course:
@@ -170,13 +209,13 @@ def get_downstream_impact(course_code):
     for p in session.query(Prerequisite).all():
         edges.setdefault(p.prerequisite_course_id, []).append((p.course_id, p.applicable_stream_id))
 
-    restriction = {target_course.id: None}  # None = affects all streams
+    edge_restriction = {target_course.id: None}  # None = no restriction implied by edges yet
     queue = [target_course.id]
     visited_via = {}
 
     while queue:
         current_id = queue.pop(0)
-        current_restriction = restriction[current_id]
+        current_restriction = edge_restriction[current_id]
         for dep_id, edge_stream_id in edges.get(current_id, []):
             if edge_stream_id is None:
                 new_restriction = current_restriction
@@ -190,8 +229,8 @@ def get_downstream_impact(course_code):
             label = "ALL" if new_restriction is None else tuple(sorted(new_restriction))
             visited_via.setdefault(dep_id, set()).add(label)
 
-            if dep_id not in restriction:
-                restriction[dep_id] = new_restriction
+            if dep_id not in edge_restriction:
+                edge_restriction[dep_id] = new_restriction
                 queue.append(dep_id)
 
     impacted_courses = []
@@ -199,24 +238,50 @@ def get_downstream_impact(course_code):
         if cid not in all_courses:
             continue
         course = all_courses[cid]
+
+        # restriction implied purely by the prerequisite edge(s)
         if "ALL" in labels:
-            applies_to = "All streams"
+            edge_stream_ids = None
         else:
-            stream_ids = set()
+            edge_stream_ids = set()
             for lbl in labels:
-                stream_ids.update(lbl)
-            applies_to = ", ".join(sorted(all_streams.get(sid, "Unknown") for sid in stream_ids))
+                edge_stream_ids.update(lbl)
+
+        # restriction implied by the course's OWN scope (stream_id or course_streams)
+        own_scope_ids = _resolve_course_stream_scope(course)
+
+        # final applicable streams = intersection of the two
+        if edge_stream_ids is None and own_scope_ids is None:
+            final_ids = None
+        elif edge_stream_ids is None:
+            final_ids = own_scope_ids
+        elif own_scope_ids is None:
+            final_ids = edge_stream_ids
+        else:
+            final_ids = edge_stream_ids & own_scope_ids
+
+        if final_ids is None:
+            applies_to = "All streams"
+        elif len(final_ids) == 0:
+            applies_to = "⚠️ No streams (data inconsistency -- check curriculum entry)"
+        else:
+            applies_to = ", ".join(sorted(all_streams.get(sid, "Unknown") for sid in final_ids))
+
         impacted_courses.append({
             "course_code": course.course_code,
             "name": course.name,
             "year_level": course.year_level,
             "semester_offered": course.semester_offered,
-            "applies_to_streams": applies_to,  # renamed from "stream" -- describes the block's scope
+            "applies_to_streams": applies_to,
         })
 
     impacted_courses.sort(key=lambda c: (c["year_level"], c["semester_offered"]))
     return target_course, impacted_courses
 
+
+# ============================================================
+# Student-specific eligibility / registration checks
+# ============================================================
 
 def get_eligible_courses(student_id):
     """Determines which courses a student is eligible to take in their current semester."""
@@ -238,15 +303,10 @@ def get_eligible_courses(student_id):
 
     for course in offered_courses:
         is_stream_compatible = False
-        if course.stream_id is None:
-            shared_entries = session.query(CourseStream).filter_by(course_id=course.id).all()
-            if not shared_entries:
-                is_stream_compatible = True
-            else:
-                shared_stream_ids = [se.stream_id for se in shared_entries]
-                if student.stream_id in shared_stream_ids:
-                    is_stream_compatible = True
-        elif course.stream_id == student.stream_id:
+        scope = _resolve_course_stream_scope(course)
+        if scope is None:
+            is_stream_compatible = True
+        elif student.stream_id in scope:
             is_stream_compatible = True
 
         if not is_stream_compatible:
