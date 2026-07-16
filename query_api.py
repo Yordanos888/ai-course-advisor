@@ -249,6 +249,94 @@ def get_common_course_offering_alternatives(course_code):
     
     return alternatives
 
+def get_course_details(course_code):
+    """
+    V1 Core: Retrieves isolated details about a specific course.
+    """
+    course = session.query(Course).filter(Course.course_code.ilike(course_code)).first()
+    if not course:
+        return None
+
+    # Get direct prerequisites
+    prereqs = session.query(Prerequisite).filter_by(course_id=course.id).all()
+    prereq_codes = []
+    for p in prereqs:
+        p_course = session.query(Course).filter_by(id=p.prerequisite_course_id).first()
+        if p_course:
+            if p.applicable_stream_id:
+                stream_name = session.query(Stream).filter_by(id=p.applicable_stream_id).first()
+                stream_suffix = f" ({stream_name.name} only)" if stream_name else ""
+            else:
+                stream_suffix = ""
+            prereq_codes.append(f"{p_course.course_code}{stream_suffix}")
+
+    # Fallback to department_id as suggested by SQLite error
+    dept = getattr(course, 'department_id', None) or getattr(course, 'department', 'Common')
+
+    return {
+        "code": course.course_code,
+        "name": course.name,
+        "credit_hours": course.credit_hours,
+        "year_level": course.year_level,
+        "semester": course.semester_offered,
+        "scope": dept,
+        "stream": course.stream.name if course.stream else "Common",
+        "prerequisites": prereq_codes or ["None"]
+    }
+
+def get_downstream_impact(course_code):
+    """
+    V1 Core: Traces forward recursive prerequisite blocks.
+    Traces what courses are directly or cascadingly blocked if a course is failed/not taken.
+    Includes the stream scope of each impacted course.
+    """
+    target_course = session.query(Course).filter(Course.course_code.ilike(course_code)).first()
+    if not target_course:
+        return None, []
+
+    # Map course_id -> Course object
+    all_courses = {c.id: c for c in session.query(Course).all()}
+    
+    # Map course_id -> list of prerequisite course_ids that require it
+    adjacency_list = {}
+    prereqs = session.query(Prerequisite).all()
+    for p in prereqs:
+        if p.prerequisite_course_id not in adjacency_list:
+            adjacency_list[p.prerequisite_course_id] = []
+        adjacency_list[p.prerequisite_course_id].append(p.course_id)
+
+    # Perform a Breadth-First Search (BFS) to find all cascading downstream descendants
+    blocked_ids = set()
+    queue = [target_course.id]
+
+    while queue:
+        current_id = queue.pop(0)
+        # Find everything that directly requires current_id
+        direct_dependents = adjacency_list.get(current_id, [])
+        for dep_id in direct_dependents:
+            if dep_id not in blocked_ids:
+                blocked_ids.add(dep_id)
+                queue.append(dep_id)
+
+    # Convert IDs back to course objects with stream details and sort them by Year/Semester
+    impacted_courses = []
+    for cid in blocked_ids:
+        if cid in all_courses:
+            course = all_courses[cid]
+            # Fetch stream name safely
+            stream_name = course.stream.name if course.stream else "Common"
+            impacted_courses.append({
+                "course_code": course.course_code,
+                "name": course.name,
+                "year_level": course.year_level,
+                "semester_offered": course.semester_offered,
+                "stream": stream_name
+            })
+
+    # Sort by Year, then Semester
+    impacted_courses.sort(key=lambda c: (c["year_level"], c["semester_offered"]))
+
+    return target_course, impacted_courses
 
 if __name__ == "__main__":
     print("🧪 Running upgraded query API with bug fixes...")
