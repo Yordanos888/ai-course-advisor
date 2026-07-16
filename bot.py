@@ -47,7 +47,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
 
-# New Command: /course <course_code>
+# course_command: skip the Stream Scope line when details['stream'] is None
 async def course_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❌ Please provide a Course Code.\nUsage: `/course ECEg3201`", parse_mode="Markdown")
@@ -66,13 +66,15 @@ async def course_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔹 *Credit Hours:* {details['credit_hours']} Cr. Hrs\n"
         f"🔹 *Standing:* Year {details['year_level']}, Semester {details['semester']}\n"
         f"🔹 *Department Scope:* {details['scope']}\n"
-        f"🔹 *Stream Scope:* {details['stream']}\n"
-        f"🔹 *Prerequisites:* {', '.join([f'`{p}`' for p in details['prerequisites']])}"
     )
+    if details['stream'] is not None:  # FIX: omit entirely before streams are chosen (Y4S2+)
+        response += f"🔹 *Stream Scope:* {details['stream']}\n"
+    response += f"🔹 *Prerequisites:*\n" + "\n".join(f"   • {p}" for p in details['prerequisites'])
+
     await update.message.reply_text(response, parse_mode="Markdown")
 
 
-# Updated Command: /downstream <course_code>
+# downstream_command: use the renamed 'applies_to_streams' key
 async def downstream_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❌ Please provide a Course Code.\nUsage: `/downstream ECEg3201`", parse_mode="Markdown")
@@ -86,7 +88,7 @@ async def downstream_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     response = f"💥 *Downstream Prerequisite Block Cascade*\n"
-    response += f"If a student fails/drops `{target_course.course_code}` ({target_course.name}), they will cascadingly be blocked from taking:\n\n"
+    response += f"If a student fails/drops `{target_course.course_code}` ({target_course.name}), they will cascadingly be blocked from:\n\n"
 
     if not impacted:
         response += "_None! This course is a dead-end terminal course with no downstream dependents._"
@@ -95,7 +97,7 @@ async def downstream_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             response += (
                 f"• `{course['course_code']}` — {course['name']}\n"
                 f"   📍 *Standing:* Year {course['year_level']}, Sem {course['semester_offered']}\n"
-                f"   📍 *Stream:* `{course['stream']}`\n\n"
+                f"   📍 *Applies to:* {course['applies_to_streams']}\n\n"  # FIX: renamed key
             )
 
     await update.message.reply_text(response, parse_mode="Markdown")
