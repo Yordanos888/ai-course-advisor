@@ -17,7 +17,8 @@
                         <th>Credit Hrs</th>
                         <th>Year</th>
                         <th>Sem</th>
-                        <th>Scope (Stream)</th>
+                        <th>Department Scope</th>
+                        <th>Stream Scope</th>
                         <th>Droppable?</th>
                         <th class="text-center">Actions</th>
                     </tr>
@@ -26,15 +27,22 @@
                     {% for course in courses %}
                     <tr>
                         <td><strong>{{ course.course_code }}</strong></td>
-                        <td>{{ course.course_name }}</td>
+                        <td>{{ course.name }}</td>
                         <td>{{ course.credit_hours }}</td>
                         <td>Year {{ course.year_level }}</td>
                         <td>Semester {{ course.semester_offered }}</td>
                         <td>
-                            {% if course.stream_id %}
-                                <span class="badge bg-info text-dark">{{ streams.get(course.stream_id, 'Unknown Stream') }}</span>
+                            {% if course.dept_scope == 'Common (College-wide)' %}
+                                <span class="badge bg-secondary">College-wide</span>
                             {% else %}
-                                <span class="badge bg-secondary">Common (All Streams)</span>
+                                <span class="badge bg-dark">{{ course.dept_scope }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if course.stream_scope == 'Common (All Streams)' %}
+                                <span class="badge bg-light text-dark border">Common (All Streams)</span>
+                            {% else %}
+                                <span class="badge bg-info text-dark">{{ course.stream_scope }}</span>
                             {% endif %}
                         </td>
                         <td>
@@ -45,7 +53,12 @@
                             {% endif %}
                         </td>
                         <td class="text-center">
-                            <a href="/course/edit/{{ course.id }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                            <div class="d-inline-flex gap-2">
+                                <a href="/course/edit/{{ course.id }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                                <form action="/course/retire/{{ course.id }}" method="POST" onsubmit="return confirm('Retire this course? This will clean up its prerequisites too.');">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Retire</button>
+                                </form>
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}

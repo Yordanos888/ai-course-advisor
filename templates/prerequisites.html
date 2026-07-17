@@ -2,54 +2,62 @@
 
 {% block content %}
 <div class="row">
+    <!-- Form to Create Relationship -->
     <div class="col-lg-4 mb-4">
         <div class="card shadow-sm mb-4">
             <div class="card-header bg-dark text-white">
-                <h5 class="mb-0">Link New Prerequisite</h5>
+                <h5 class="mb-0">Add Prerequisite Dependencies</h5>
             </div>
             <div class="card-body">
                 <form method="POST">
                     <div class="mb-3">
-                        <label for="course_id" class="form-label">Target Course</label>
+                        <label for="course_id" class="form-label fw-bold">Target Course</label>
                         <select class="form-select" id="course_id" name="course_id" required>
                             <option value="">-- Choose Course --</option>
                             {% for course in courses %}
-                                <option value="{{ course.id }}">{{ course.course_code }} - {{ course.course_name }}</option>
+                                <option value="{{ course.id }}">{{ course.course_code }} - {{ course.name }}</option>
                             {% endfor %}
                         </select>
                     </div>
 
+                    <!-- Multiple Select Dependencies -->
                     <div class="mb-3">
-                        <label for="prerequisite_course_id" class="form-label">Prerequisite Dependency</label>
-                        <select class="form-select" id="prerequisite_course_id" name="prerequisite_course_id" required>
-                            <option value="">-- Must Pass First --</option>
+                        <label class="form-label fw-bold">Prerequisite Dependencies (Select multiple if needed)</label>
+                        <div class="p-3 border rounded bg-light" style="max-height: 200px; overflow-y: auto;">
                             {% for course in courses %}
-                                <option value="{{ course.id }}">{{ course.course_code }} - {{ course.course_name }}</option>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="prerequisite_course_ids" value="{{ course.id }}" id="prereq_c_{{ course.id }}">
+                                <label class="form-check-label" for="prereq_c_{{ course.id }}">{{ course.course_code }} - {{ course.name }}</label>
+                            </div>
                             {% endfor %}
-                        </select>
+                        </div>
                     </div>
 
+                    <!-- Multi-Select Stream checkboxes -->
                     <div class="mb-4">
-                        <label for="applicable_stream_id" class="form-label">Stream Conditional Requirement</label>
-                        <select class="form-select" id="applicable_stream_id" name="applicable_stream_id">
-                            <option value="">Required for all Streams</option>
+                        <label class="form-label fw-bold">Applicable Streams</label>
+                        <div class="p-3 border rounded bg-light" style="max-height: 180px; overflow-y: auto;">
                             {% for stream in streams %}
-                                <option value="{{ stream.id }}">{{ stream.name }}</option>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="applicable_stream_ids" value="{{ stream.id }}" id="pr_stream_{{ stream.id }}">
+                                <label class="form-check-label" for="pr_stream_{{ stream.id }}">{{ stream.name }}</label>
+                            </div>
                             {% endfor %}
-                        </select>
-                        <small class="text-muted">If this constraint is only active for a particular stream branch selection.</small>
+                        </div>
+                        <small class="text-muted">Leave unchecked to make this rule apply to <strong>All Streams</strong>.</small>
                     </div>
 
-                    <button type="submit" class="btn btn-primary w-100">Establish Link</button>
+                    <button type="submit" class="btn btn-primary w-100">Establish Link(s)</button>
                 </form>
             </div>
         </div>
     </div>
 
+    <!-- Relationship Tree List -->
     <div class="col-lg-8">
         <div class="card shadow-sm">
             <div class="card-header bg-secondary text-white">
-                <h5 class="mb-0">Current Prerequisite Mapping</h5>
+                <h5 class="mb-0">Active Prerequisite Constraints</h5>
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
@@ -59,6 +67,7 @@
                                 <th>Target Course</th>
                                 <th>Required Prerequisite</th>
                                 <th>Applicable Stream</th>
+                                <th>Special Narrative Rules</th>
                                 <th class="text-center">Action</th>
                             </tr>
                         </thead>
@@ -67,22 +76,29 @@
                             <tr>
                                 <td>
                                     <strong>{{ course_map[pr.course_id].course_code }}</strong>
-                                    <div class="text-muted small">{{ course_map[pr.course_id].course_name }}</div>
+                                    <div class="text-muted small">{{ course_map[pr.course_id].name }}</div>
                                 </td>
                                 <td>
                                     <span class="text-danger">⚠️</span>
                                     <strong>{{ course_map[pr.prerequisite_course_id].course_code }}</strong>
-                                    <div class="text-muted small">{{ course_map[pr.prerequisite_course_id].course_name }}</div>
+                                    <div class="text-muted small">{{ course_map[pr.prerequisite_course_id].name }}</div>
                                 </td>
                                 <td>
                                     {% if pr.applicable_stream_id %}
                                         <span class="badge bg-warning text-dark">{{ stream_map[pr.applicable_stream_id] }}</span>
                                     {% else %}
-                                        <span class="badge bg-light text-dark">Global (All Streams)</span>
+                                        <span class="badge bg-light text-dark border">All Streams</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if course_map[pr.course_id].special_requirement %}
+                                        <span class="badge bg-danger">💡 {{ course_map[pr.course_id].special_requirement }}</span>
+                                    {% else %}
+                                        <span class="text-muted italic small">Standard Connection</span>
                                     {% endif %}
                                 </td>
                                 <td class="text-center">
-                                    <form action="/prerequisites/delete/{{ pr.id }}" method="POST" onsubmit="return confirm('Are you sure you want to remove this prerequisite constraint?');">
+                                    <form action="/prerequisites/delete/{{ pr.id }}" method="POST" onsubmit="return confirm('Remove this prerequisite link?');">
                                         <button type="submit" class="btn btn-sm btn-outline-danger">Unlink</button>
                                     </form>
                                 </td>
