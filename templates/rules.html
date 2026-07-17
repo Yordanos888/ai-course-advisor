@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="card shadow-sm">
+    <div class="card-header bg-dark text-white">
+        <h4 class="mb-0">Campus Operational Rules Editor</h4>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-striped align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Rule Key Identifier</th>
+                        <th>Current Limit Value</th>
+                        <th>Scope Profile</th>
+                        <th>Description Context</th>
+                        <th>Update Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for rule in rules %}
+                    <tr>
+                        <td><code>{{ rule.rule_key }}</code></td>
+                        <td>
+                            <span class="fs-5 fw-bold text-primary">{{ rule.rule_value }}</span>
+                        </td>
+                        <td>
+                            {% if rule.year_level %}
+                                <span class="badge bg-info text-dark">Year {{ rule.year_level }}</span>
+                            {% endif %}
+                            {% if rule.department_id %}
+                                <span class="badge bg-secondary">Dept ID: {{ rule.department_id }}</span>
+                            {% else %}
+                                <span class="badge bg-light text-dark">Global System</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-muted small" style="max-width: 350px;">{{ rule.description }}</td>
+                        <td>
+                            <form method="POST" class="row row-cols-lg-auto g-2 align-items-center">
+                                <input type="hidden" name="rule_id" value="{{ rule.id }}">
+                                <div class="col-12">
+                                    <input type="number" step="0.1" class="form-control form-control-sm" 
+                                           name="rule_value" value="{{ rule.rule_value }}" required style="width: 100px;">
+                                </div>
+                                <div class="col-12">
+                                    <button type="submit" class="btn btn-sm btn-success">Save</button>
+                                </div>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

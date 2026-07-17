@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Course Catalog (ECE Curriculum)</h2>
+    <a href="/course/add" class="btn btn-primary shadow-sm">+ Add New Course</a>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-striped mb-0 align-middle">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Code</th>
+                        <th>Course Name</th>
+                        <th>Credit Hrs</th>
+                        <th>Year</th>
+                        <th>Sem</th>
+                        <th>Scope (Stream)</th>
+                        <th>Droppable?</th>
+                        <th class="text-center">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for course in courses %}
+                    <tr>
+                        <td><strong>{{ course.course_code }}</strong></td>
+                        <td>{{ course.course_name }}</td>
+                        <td>{{ course.credit_hours }}</td>
+                        <td>Year {{ course.year_level }}</td>
+                        <td>Semester {{ course.semester_offered }}</td>
+                        <td>
+                            {% if course.stream_id %}
+                                <span class="badge bg-info text-dark">{{ streams.get(course.stream_id, 'Unknown Stream') }}</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Common (All Streams)</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if course.is_droppable %}
+                                <span class="badge bg-success">Yes</span>
+                            {% else %}
+                                <span class="badge bg-danger">No</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <a href="/course/edit/{{ course.id }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

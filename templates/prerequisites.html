@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-4 mb-4">
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0">Link New Prerequisite</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="course_id" class="form-label">Target Course</label>
+                        <select class="form-select" id="course_id" name="course_id" required>
+                            <option value="">-- Choose Course --</option>
+                            {% for course in courses %}
+                                <option value="{{ course.id }}">{{ course.course_code }} - {{ course.course_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="prerequisite_course_id" class="form-label">Prerequisite Dependency</label>
+                        <select class="form-select" id="prerequisite_course_id" name="prerequisite_course_id" required>
+                            <option value="">-- Must Pass First --</option>
+                            {% for course in courses %}
+                                <option value="{{ course.id }}">{{ course.course_code }} - {{ course.course_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="applicable_stream_id" class="form-label">Stream Conditional Requirement</label>
+                        <select class="form-select" id="applicable_stream_id" name="applicable_stream_id">
+                            <option value="">Required for all Streams</option>
+                            {% for stream in streams %}
+                                <option value="{{ stream.id }}">{{ stream.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">If this constraint is only active for a particular stream branch selection.</small>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100">Establish Link</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-secondary text-white">
+                <h5 class="mb-0">Current Prerequisite Mapping</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Target Course</th>
+                                <th>Required Prerequisite</th>
+                                <th>Applicable Stream</th>
+                                <th class="text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for pr in prereqs %}
+                            <tr>
+                                <td>
+                                    <strong>{{ course_map[pr.course_id].course_code }}</strong>
+                                    <div class="text-muted small">{{ course_map[pr.course_id].course_name }}</div>
+                                </td>
+                                <td>
+                                    <span class="text-danger">⚠️</span>
+                                    <strong>{{ course_map[pr.prerequisite_course_id].course_code }}</strong>
+                                    <div class="text-muted small">{{ course_map[pr.prerequisite_course_id].course_name }}</div>
+                                </td>
+                                <td>
+                                    {% if pr.applicable_stream_id %}
+                                        <span class="badge bg-warning text-dark">{{ stream_map[pr.applicable_stream_id] }}</span>
+                                    {% else %}
+                                        <span class="badge bg-light text-dark">Global (All Streams)</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <form action="/prerequisites/delete/{{ pr.id }}" method="POST" onsubmit="return confirm('Are you sure you want to remove this prerequisite constraint?');">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">Unlink</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
