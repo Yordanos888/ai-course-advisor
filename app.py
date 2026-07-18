@@ -10,14 +10,12 @@ from models import (
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super_secret_ece_advisor_key")
 
-# Setup SQLAlchemy Session Factory
 Session = sessionmaker(bind=engine)
 
-# Helper to resolve descriptive scopes for display
 def get_course_scopes(session, course_id):
     course = session.query(Course).filter_by(id=course_id).first()
     
-    # 1. Resolve Department Scopes (Handling NULL = College-wide)
+    # Resolve Department Scopes
     shared_depts = session.query(CommonCourse).filter_by(course_id=course_id).all()
     if course.department_id is None:
         dept_str = "Common (College-wide)"
@@ -30,7 +28,7 @@ def get_course_scopes(session, course_id):
             dept_codes.extend(shared_codes)
         dept_str = f"({', '.join(dept_codes)})" if dept_codes else "Unknown"
 
-    # 2. Resolve Stream Scopes
+    # Resolve Stream Scopes
     shared_streams = session.query(CourseStream).filter_by(course_id=course_id).all()
     if course.stream_id:
         stream_ids = {course.stream_id}
@@ -46,16 +44,11 @@ def get_course_scopes(session, course_id):
     return dept_str, stream_str
 
 
-# -----------------------------------------------------------------------------
-# Route: Dashboard (Home)
-# -----------------------------------------------------------------------------
 @app.route('/')
 def index():
     session = Session()
     try:
         courses = session.query(Course).order_by(Course.year_level, Course.semester_offered).all()
-        
-        # Build enriched course list
         enriched_courses = []
         for course in courses:
             dept_scope, stream_scope = get_course_scopes(session, course.id)
@@ -68,17 +61,14 @@ def index():
                 'semester_offered': course.semester_offered,
                 'is_droppable': course.is_droppable,
                 'dept_scope': dept_scope,
-                'stream_scope': stream_scope
+                'stream_scope': stream_scope,
+                'special_requirement': course.special_requirement
             })
-            
         return render_template('index.html', courses=enriched_courses)
     finally:
         session.close()
 
 
-# -----------------------------------------------------------------------------
-# Route: Add / Edit Course
-# -----------------------------------------------------------------------------
 @app.route('/course/add', methods=['GET', 'POST'])
 @app.route('/course/edit/<int:course_id>', methods=['GET', 'POST'])
 def edit_course(course_id=None):
@@ -94,7 +84,6 @@ def edit_course(course_id=None):
                 flash(f"Course ID {course_id} not found.", "danger")
                 return redirect(url_for('index'))
             
-            # Get current associations
             current_dept_ids = [d.shared_with_department_id for d in session.query(CommonCourse).filter_by(course_id=course_id).all()]
             if course.department_id:
                 current_dept_ids.append(course.department_id)
@@ -112,20 +101,19 @@ def edit_course(course_id=None):
             credit_hours = int(request.form['credit_hours'])
             year_level = int(request.form['year_level'])
             semester_offered = int(request.form['semester_offered'])
+            
+            # IMPROVEMENT: Free-text writable special structural rule
             special_requirement = request.form.get('special_requirement', '').strip()
             is_droppable = 'is_droppable' in request.form
             
             selected_dept_ids = [int(x) for x in request.form.getlist('department_ids')]
             selected_stream_ids = [int(x) for x in request.form.getlist('stream_ids')]
 
-            # If no department selected, it defaults to college-wide (None)
             primary_dept_id = selected_dept_ids[0] if selected_dept_ids else None
             primary_stream_id = selected_stream_ids[0] if len(selected_stream_ids) == 1 else None
 
-            # Get an active curriculum version ID from DB to prevent SQLite Integrity Errors[cite: 16]
             active_cv = session.query(CurriculumVersion).filter_by(is_active=True).first()
             if not active_cv:
-                # Fallback to creating a default curriculum if none exists
                 active_cv = CurriculumVersion(version_name="ECE-Curriculum-2022", is_active=True)
                 session.add(active_cv)
                 session.flush()
@@ -139,7 +127,7 @@ def edit_course(course_id=None):
                     semester_offered=semester_offered,
                     department_id=primary_dept_id,
                     stream_id=primary_stream_id,
-                    curriculum_version_id=active_cv.id, # FIX: Solves NOT NULL constraint![cite: 16]
+                    curriculum_version_id=active_cv.id,
                     special_requirement=special_requirement if special_requirement else None,
                     is_droppable=is_droppable
                 )
@@ -156,20 +144,18 @@ def edit_course(course_id=None):
                 course.special_requirement = special_requirement if special_requirement else None
                 course.is_droppable = is_droppable
 
-            # Update Common departments (Cross-Department mappings)
             session.query(CommonCourse).filter_by(course_id=course.id).delete()
             for dept_id in selected_dept_ids:
                 if dept_id != primary_dept_id:
                     session.add(CommonCourse(course_id=course.id, shared_with_department_id=dept_id))
 
-            # Update Course-Stream mappings
             session.query(CourseStream).filter_by(course_id=course.id).delete()
             if len(selected_stream_ids) > 1:
                 for stream_id in selected_stream_ids:
                     session.add(CourseStream(course_id=course.id, stream_id=stream_id))
 
             session.commit()
-            flash(f"Course {course_code} processed successfully!", "success")
+            flash(f"Course {course_code} updated successfully!", "success")
             return redirect(url_for('index'))
 
         return render_template(
@@ -180,17 +166,10 @@ def edit_course(course_id=None):
             current_dept_ids=current_dept_ids,
             current_stream_ids=current_stream_ids
         )
-    except Exception as e:
-        session.rollback()
-        flash(f"An error occurred: {str(e)}", "danger")
-        return redirect(url_for('index'))
     finally:
         session.close()
 
 
-# -----------------------------------------------------------------------------
-# Route: Retire / Delete Course Safely
-# -----------------------------------------------------------------------------
 @app.route('/course/retire/<int:course_id>', methods=['POST'])
 def retire_course(course_id):
     session = Session()
@@ -198,27 +177,20 @@ def retire_course(course_id):
         course = session.query(Course).filter_by(id=course_id).first()
         if course:
             code = course.course_code
-            # Delete related dependency associations first to satisfy foreign keys
             session.query(Prerequisite).filter((Prerequisite.course_id == course_id) | (Prerequisite.prerequisite_course_id == course_id)).delete()
             session.query(CourseStream).filter_by(course_id=course_id).delete()
             session.query(CommonCourse).filter_by(course_id=course_id).delete()
-            
             session.delete(course)
             session.commit()
-            flash(f"Course {code} has been retired and deleted from records successfully.", "warning")
-        else:
-            flash("Course not found.", "danger")
+            flash(f"Course {code} retired successfully.", "warning")
     except Exception as e:
         session.rollback()
-        flash(f"Error during retirement: {str(e)}", "danger")
+        flash(str(e), "danger")
     finally:
         session.close()
     return redirect(url_for('index'))
 
 
-# -----------------------------------------------------------------------------
-# Route: Manage Prerequisites
-# -----------------------------------------------------------------------------
 @app.route('/prerequisites', methods=['GET', 'POST'])
 def manage_prerequisites():
     session = Session()
@@ -232,9 +204,11 @@ def manage_prerequisites():
 
         if request.method == 'POST':
             course_id = int(request.form['course_id'])
-            # Support selecting multiple prerequisite courses at once[cite: 16]
             selected_prereq_ids = [int(x) for x in request.form.getlist('prerequisite_course_ids')]
             selected_stream_ids = [int(x) for x in request.form.getlist('applicable_stream_ids')]
+            
+            # IMPROVEMENT: Read custom narrative description for this relationship link
+            prereq_note = request.form.get('note', '').strip()
 
             if not selected_prereq_ids:
                 flash("Please choose at least one prerequisite course.", "warning")
@@ -242,34 +216,38 @@ def manage_prerequisites():
 
             for prereq_id in selected_prereq_ids:
                 if course_id == prereq_id:
-                    continue # Skip self-prerequisite links
+                    continue 
 
                 if not selected_stream_ids:
-                    # Global link (All Streams)[cite: 16]
                     existing = session.query(Prerequisite).filter_by(
                         course_id=course_id, 
                         prerequisite_course_id=prereq_id,
                         applicable_stream_id=None
                     ).first()
-                    if not existing:
+                    if existing:
+                        existing.note = prereq_note if prereq_note else None
+                    else:
                         session.add(Prerequisite(
                             course_id=course_id,
                             prerequisite_course_id=prereq_id,
-                            applicable_stream_id=None
+                            applicable_stream_id=None,
+                            note=prereq_note if prereq_note else None
                         ))
                 else:
-                    # Specific stream limits only[cite: 16]
                     for stream_id in selected_stream_ids:
                         existing = session.query(Prerequisite).filter_by(
                             course_id=course_id, 
                             prerequisite_course_id=prereq_id,
                             applicable_stream_id=stream_id
                         ).first()
-                        if not existing:
+                        if existing:
+                            existing.note = prereq_note if prereq_note else None
+                        else:
                             session.add(Prerequisite(
                                 course_id=course_id,
                                 prerequisite_course_id=prereq_id,
-                                applicable_stream_id=stream_id
+                                applicable_stream_id=stream_id,
+                                note=prereq_note if prereq_note else None
                             ))
             
             session.commit()
@@ -303,6 +281,52 @@ def delete_prerequisite(prereq_link_id):
     finally:
         session.close()
     return redirect(url_for('manage_prerequisites'))
+
+
+# -----------------------------------------------------------------------------
+# FIX: Fully compatible with your original key-value tabular rules.html layout
+# -----------------------------------------------------------------------------
+@app.route('/campus-rules', methods=['GET', 'POST'])
+@app.route('/campus_rules', methods=['GET', 'POST'])
+def campus_rules():
+    session = Session()
+    try:
+        if request.method == 'POST':
+            # Identify which individual rule row is being saved
+            rule_id = int(request.form['rule_id'])
+            new_value = float(request.form['rule_value'])
+            
+            rule_to_update = session.query(CampusRule).filter_by(id=rule_id).first()
+            if rule_to_update:
+                rule_to_update.rule_value = new_value
+                session.commit()
+                flash(f"Rule '{rule_to_update.rule_key}' updated to {new_value} successfully!", "success")
+            else:
+                flash("Rule identifier not found.", "danger")
+            return redirect(url_for('campus_rules'))
+
+        # Fetch all operational rules for the table iteration loop
+        all_rules = session.query(CampusRule).all()
+        
+        # Seed default key-value rules if the table is completely empty
+        if not all_rules:
+            default_rules = [
+                CampusRule(rule_key="MAX_CREDITS_REGULAR", rule_value=22.0, description="Maximum standard credit load allowed per semester for normal students."),
+                CampusRule(rule_key="MAX_CREDITS_PROBATION", rule_value=12.0, description="Restricted credit limit forced upon students on academic probation."),
+                CampusRule(rule_key="ALLOW_ADVISOR_OVERRIDES", rule_value=1.0, description="Boolean flag (1.0 for true, 0.0 for false) allowing advisor override status.")
+            ]
+            session.add_all(default_rules)
+            session.commit()
+            all_rules = session.query(CampusRule).all()
+
+        # Passes "rules" context variables directly into your original template
+        return render_template('rules.html', rules=all_rules)
+    except Exception as e:
+        session.rollback()
+        flash(f"Operational update error: {str(e)}", "danger")
+        return redirect(url_for('index'))
+    finally:
+        session.close()
 
 
 if __name__ == '__main__':

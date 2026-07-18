@@ -5,7 +5,7 @@
     <div class="col-md-8">
         <div class="card shadow-sm">
             <div class="card-header bg-dark text-white">
-                <h4 class="mb-0">{{ 'Edit' if course else 'Add New' }} Course</h4>
+                <h4 class="mb-0">{{ 'Edit' if course else 'Add New' }} Course Profile</h4>
             </div>
             <div class="card-body">
                 <form method="POST">
@@ -32,7 +32,7 @@
                             <div class="form-check form-switch mt-2">
                                 <input class="form-check-input" type="checkbox" id="is_droppable" name="is_droppable" 
                                        {% if not course or course.is_droppable %}checked{% endif %}>
-                                <label class="form-check-label" for="is_droppable">Allow drop</label>
+                                <label class="form-check-label" for="is_droppable">Allow student withdrawal drop</label>
                             </div>
                         </div>
                     </div>
@@ -52,7 +52,6 @@
                         </div>
                     </div>
 
-                    <!-- Multi-Select Departments -->
                     <div class="mb-3">
                         <label class="form-label fw-bold">Department Scope</label>
                         <div class="p-3 border rounded bg-light">
@@ -60,16 +59,15 @@
                             <div class="form-check form-check-inline">
                                 <input class="form-check-input" type="checkbox" name="department_ids" value="{{ dept.id }}" id="dept_{{ dept.id }}"
                                        {% if dept.id in current_dept_ids %}checked{% endif %}>
-                                <label class="form-check-label" for="dept_{{ dept.id }}">{{ dept.name }} ({{ dept.code }})</label>
+                                <label class="form-check-label" for="dept_{{ dept.id }}">{{ dept.code }}</label>
                             </div>
                             {% endfor %}
                         </div>
-                        <small class="text-muted">Leave all unchecked to represent a <strong>Common / College-Wide</strong> course.</small>
+                        <small class="text-muted">Leave all boxes unchecked to declare this a **College-Wide** course.</small>
                     </div>
 
-                    <!-- Multi-Select Streams -->
                     <div class="mb-3">
-                        <label class="form-label fw-bold">Stream Specificity (Cross-Stream Sharing)</label>
+                        <label class="form-label fw-bold">Stream Scope Mapping</label>
                         <div class="p-3 border rounded bg-light">
                             {% for stream in streams %}
                             <div class="form-check">
@@ -79,23 +77,20 @@
                             </div>
                             {% endfor %}
                         </div>
-                        <small class="text-muted">Leave unchecked if this is common to all streams.</small>
                     </div>
 
-                    <!-- Special Requirements -->
+                    <!-- IMPROVEMENT: Writable Free Text Field for Structural Pre-requisites -->
                     <div class="mb-4">
-                        <label for="special_requirement" class="form-label fw-bold">Special Structural Prerequisite Rule (e.g., FYP II / Exit Exam)</label>
-                        <select class="form-select" id="special_requirement" name="special_requirement">
-                            <option value="" {% if not course or not course.special_requirement %}selected{% endif %}>None (Standard Course-to-Course)</option>
-                            <option value="ALL_STREAM_COURSES" {% if course and course.special_requirement == 'ALL_STREAM_COURSES' %}selected{% endif %}>ALL_STREAM_COURSES (All stream majors must be passed first)</option>
-                            <option value="ALL_COURSES" {% if course and course.special_requirement == 'ALL_COURSES' %}selected{% endif %}>ALL_COURSES (Every single general curriculum course must be passed first)</option>
-                        </select>
-                        <small class="text-muted">Selecting this automatically applies narrative block conditions to student registrations.</small>
+                        <label for="special_requirement" class="form-label fw-bold text-primary">Special Structural Prerequisite Rule (Custom Writable Expression)</label>
+                        <input type="text" class="form-control border-primary" id="special_requirement" name="special_requirement"
+                               value="{{ course.special_requirement if course and course.special_requirement else '' }}" 
+                               placeholder="e.g., ALL_STREAM_COURSES, or 'Must complete 110 credits & exit mock exam'">
+                        <small class="text-muted">Type any custom narrative rule logic here. Leave empty if standard course connections apply.</small>
                     </div>
 
                     <div class="d-flex justify-content-between">
                         <a href="/" class="btn btn-outline-secondary">Cancel</a>
-                        <button type="submit" class="btn btn-success">{{ 'Update Course' if course else 'Create Course' }}</button>
+                        <button type="submit" class="btn btn-success">Save Course Changes</button>
                     </div>
                 </form>
             </div>
