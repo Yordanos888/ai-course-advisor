@@ -67,7 +67,7 @@ ECEg5401,Operating Systems,3,5,1,ECE,Computer,"ECEg4103, ECEg4404",TRUE
 ECEg5403,Embedded Systems,4,5,1,ECE,Computer,ECEg4102,TRUE
 ECEg5405,VLSI Design,3,5,1,ECE,Computer,ECEg4103,TRUE
 ECEg5407,Introduction to Machine Learning,3,5,1,"ECE, EME",Computer,"ECEg3109, ECEg4404",TRUE
-ECEg5511,Robotics and Computer Vision,3,5,1,ECE,Computer,"MEng2102, ECEg4105",TRUE
+ECEg5511,Robotics and Computer Vision,3,5,1,ECE,"Computer, Control","MEng2102, ECEg4105",TRUE
 ECEg5701,Power Electronics and Electric Drives,4,5,1,"ECE, EME","Control, Power",ECEg4704,TRUE
 ECEg5705,Electrical Installation,3,5,1,ECE,"Control, Power",ECEg3113,TRUE
 ECEg5507,Digital Control Systems,3,5,1,ECE,Control,ECEg4510,TRUE
