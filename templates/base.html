@@ -3,44 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI-Course Advisor Admin Portal</title>
+    <title>ECE Curriculum Advisory Panel</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background-color: #f3f5f7; }
-        .navbar-brand { font-weight: bold; }
-    </style>
 </head>
-<body>
-
+<body class="bg-light">
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4 shadow-sm">
         <div class="container">
-            <a class="navbar-brand" href="/">🤖 AI-Course Advisor Admin</a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="/">📚 Course Catalog</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/prerequisites">🔗 Prerequisites Manager</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('campus_rules') }}">Campus Rules</a>
-                    </li>
-                </ul>
+            <a class="navbar-brand" href="/">🎓 ECE Academic Panel</a>
+            <div class="navbar-nav me-auto">
+                <a class="nav-item nav-link" href="/">Catalog Matrix</a>
+                {% if session.get('is_admin') %}
+                <a class="nav-item nav-link" href="/prerequisites">Prerequisite Map</a>
+                <a class="nav-item nav-link" href="/campus-rules">Operational Rules</a>
+                {% endif %}
+            </div>
+            <div class="navbar-nav ms-auto">
+                {% if session.get('is_admin') %}
+                    <span class="navbar-text me-3 text-success">⚙️ Admin Mode active</span>
+                    <a class="btn btn-sm btn-outline-danger" href="/logout">Logout</a>
+                {% else %}
+                    <a class="btn btn-sm btn-outline-light" href="/login">Admin Login</a>
+                {% endif %}
             </div>
         </div>
     </nav>
-
-    <div class="container mb-5">
+    <div class="container">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
-                    <div class="alert alert-{{ category if category != 'error' else 'danger' }} alert-dismissible fade show shadow-sm" role="alert">
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
                         {{ message }}
-                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>
                 {% endfor %}
             {% endif %}
@@ -48,7 +41,6 @@
 
         {% block content %}{% endblock %}
     </div>
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

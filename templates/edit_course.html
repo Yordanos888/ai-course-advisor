@@ -5,92 +5,72 @@
     <div class="col-md-8">
         <div class="card shadow-sm">
             <div class="card-header bg-dark text-white">
-                <h4 class="mb-0">{{ 'Edit' if course else 'Add New' }} Course Profile</h4>
+                <h4 class="mb-0">{% if course %}Modify Course Architecture{% else %}Create New Course Record{% endif %}</h4>
             </div>
             <div class="card-body">
                 <form method="POST">
-                    <div class="mb-3">
-                        <label for="course_code" class="form-label fw-bold">Course Code</label>
-                        <input type="text" class="form-control" id="course_code" name="course_code" 
-                               value="{{ course.course_code if course else '' }}" required placeholder="e.g., ECEg3201">
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="course_name" class="form-label fw-bold">Course Name</label>
-                        <input type="text" class="form-control" id="course_name" name="course_name" 
-                               value="{{ course.name if course else '' }}" required placeholder="e.g., Database Systems">
-                    </div>
-
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="credit_hours" class="form-label">Credit Hours</label>
-                            <input type="number" class="form-control" id="credit_hours" name="credit_hours" 
-                                   value="{{ course.credit_hours if course else 3 }}" min="1" max="10" required>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Course Code</label>
+                            <input type="text" name="course_code" class="form-control" value="{{ course.course_code if course else '' }}" required placeholder="e.g., ECE211">
                         </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="is_droppable" class="form-label d-block">Droppable?</label>
-                            <div class="form-check form-switch mt-2">
-                                <input class="form-check-input" type="checkbox" id="is_droppable" name="is_droppable" 
-                                       {% if not course or course.is_droppable %}checked{% endif %}>
-                                <label class="form-check-label" for="is_droppable">Allow student withdrawal drop</label>
-                            </div>
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold">Course Name</label>
+                            <input type="text" name="course_name" class="form-control" value="{{ course.name if course else '' }}" required placeholder="e.g., Signal & Systems">
                         </div>
                     </div>
 
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="year_level" class="form-label">Year Level</label>
-                            <input type="number" class="form-control" id="year_level" name="year_level" 
-                                   value="{{ course.year_level if course else 1 }}" min="1" max="5" required>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Credit Hours</label>
+                            <input type="number" name="credit_hours" class="form-control" value="{{ course.credit_hours if course else 3 }}" required min="1" max="6">
                         </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="semester_offered" class="form-label">Semester Offered</label>
-                            <select class="form-select" id="semester_offered" name="semester_offered" required>
-                                <option value="1" {% if course and course.semester_offered == 1 %}selected{% endif %}>Semester 1</option>
-                                <option value="2" {% if course and course.semester_offered == 2 %}selected{% endif %}>Semester 2</option>
-                            </select>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Year Level</label>
+                            <input type="number" name="year_level" class="form-control" value="{{ course.year_level if course else 1 }}" required min="1" max="5">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Semester</label>
+                            <input type="number" name="semester_offered" class="form-control" value="{{ course.semester_offered if course else 1 }}" required min="1" max="2">
                         </div>
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label fw-bold">Department Scope</label>
-                        <div class="p-3 border rounded bg-light">
+                        <label class="form-label fw-bold">Department Scope (Select multiple if cross-listed)</label>
+                        <select name="department_ids" class="form-select" multiple size="3" required>
                             {% for dept in departments %}
-                            <div class="form-check form-check-inline">
-                                <input class="form-check-input" type="checkbox" name="department_ids" value="{{ dept.id }}" id="dept_{{ dept.id }}"
-                                       {% if dept.id in current_dept_ids %}checked{% endif %}>
-                                <label class="form-check-label" for="dept_{{ dept.id }}">{{ dept.code }}</label>
-                            </div>
+                                <option value="{{ dept.id }}" {% if dept.id in current_dept_ids %}selected{% endif %}>
+                                    {{ dept.name }} ({{ dept.code }})
+                                </option>
                             {% endfor %}
-                        </div>
-                        <small class="text-muted">Leave all boxes unchecked to declare this a **College-Wide** course.</small>
+                        </select>
+                        <div class="form-text small">Hold Ctrl (or Cmd) to select multiple scopes. The first chosen acts as primary.</div>
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label fw-bold">Stream Scope Mapping</label>
-                        <div class="p-3 border rounded bg-light">
+                        <label class="form-label fw-bold">Applicable Streams (Leave completely empty if common to all ECE fields)</label>
+                        <select name="stream_ids" class="form-select" multiple size="3">
                             {% for stream in streams %}
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="stream_ids" value="{{ stream.id }}" id="stream_{{ stream.id }}"
-                                       {% if stream.id in current_stream_ids %}checked{% endif %}>
-                                <label class="form-check-label" for="stream_{{ stream.id }}">{{ stream.name }}</label>
-                            </div>
+                                <option value="{{ stream.id }}" {% if stream.id in current_stream_ids %}selected{% endif %}>
+                                    {{ stream.name }}
+                                </option>
                             {% endfor %}
-                        </div>
+                        </select>
                     </div>
 
-                    <!-- IMPROVEMENT: Writable Free Text Field for Structural Pre-requisites -->
-                    <div class="mb-4">
-                        <label for="special_requirement" class="form-label fw-bold text-primary">Special Structural Prerequisite Rule (Custom Writable Expression)</label>
-                        <input type="text" class="form-control border-primary" id="special_requirement" name="special_requirement"
-                               value="{{ course.special_requirement if course and course.special_requirement else '' }}" 
-                               placeholder="e.g., ALL_STREAM_COURSES, or 'Must complete 110 credits & exit mock exam'">
-                        <small class="text-muted">Type any custom narrative rule logic here. Leave empty if standard course connections apply.</small>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Special Custom Criteria Flag</label>
+                        <input type="text" name="special_requirement" class="form-control" value="{{ course.special_requirement if (course and course.special_requirement) else '' }}" placeholder="e.g., Graduation Project, Interdisciplinary">
+                    </div>
+
+                    <div class="mb-4 form-check form-switch">
+                        <input class="form-check-input" type="checkbox" name="is_droppable" id="is_droppable" {% if not course or course.is_droppable %}checked{% endif %}>
+                        <label class="form-check-label fw-bold" for="is_droppable">Allow Student Drops (Droppable Status)</label>
                     </div>
 
                     <div class="d-flex justify-content-between">
-                        <a href="/" class="btn btn-outline-secondary">Cancel</a>
-                        <button type="submit" class="btn btn-success">Save Course Changes</button>
+                        <a href="/" class="btn btn-outline-secondary">Discard Changes</a>
+                        <button type="submit" class="btn btn-success">{% if course %}Save Adjustments{% else %}Create Course Record{% endif %}</button>
                     </div>
                 </form>
             </div>

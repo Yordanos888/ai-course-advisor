@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-dark text-white text-center py-3">
+                <h5 class="mb-0">Portal Administrative Login</h5>
+            </div>
+            <div class="card-body p-4">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-muted">Username</label>
+                        <input type="text" name="username" class="form-control" required placeholder="Default: admin">
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label small fw-bold text-muted">Password</label>
+                        <input type="password" name="password" class="form-control" required placeholder="Default: admin123">
+                    </div>
+                    <button type="submit" class="btn btn-dark w-100 py-2">Authenticate Key</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,10 +1,11 @@
 # app.py
 import os
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session as flask_session
+from functools import wraps
 from sqlalchemy.orm import sessionmaker
 from models import (
     engine, Course, Prerequisite, CampusRule, Stream, Department, 
-    CourseStream, CommonCourse, CurriculumVersion
+    CourseStream, CommonCourse
 )
 
 app = Flask(__name__)
@@ -12,11 +13,50 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super_secret_ece_advisor_ke
 
 Session = sessionmaker(bind=engine)
 
+# -----------------------------------------------------------------------------
+# AUTHENTICATION DECORATOR & ROUTING (Preserved)
+# -----------------------------------------------------------------------------
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not flask_session.get('is_admin'):
+            flash("Authentication Required: Please log in to access admin privileges.", "danger")
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username'].strip()
+        password = request.form['password'].strip()
+        
+        expected_user = os.environ.get("ADMIN_USER", "admin")
+        expected_pass = os.environ.get("ADMIN_PASS", "admin123")
+        
+        if username == expected_user and password == expected_pass:
+            flask_session['is_admin'] = True
+            flask_session['username'] = username
+            flash("Welcome back, Administrator!", "success")
+            return redirect(url_for('index'))
+        else:
+            flash("Invalid credentials. Please try again.", "danger")
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    flask_session.clear()
+    flash("Logged out successfully.", "info")
+    return redirect(url_for('index'))
+
+
+# -----------------------------------------------------------------------------
+# CORE SCOPE HELPER
+# -----------------------------------------------------------------------------
 def get_course_scopes(session, course_id):
     course = session.query(Course).filter_by(id=course_id).first()
-    
-    # Resolve Department Scopes
     shared_depts = session.query(CommonCourse).filter_by(course_id=course_id).all()
+    
     if course.department_id is None:
         dept_str = "Common (College-wide)"
     else:
@@ -28,7 +68,6 @@ def get_course_scopes(session, course_id):
             dept_codes.extend(shared_codes)
         dept_str = f"({', '.join(dept_codes)})" if dept_codes else "Unknown"
 
-    # Resolve Stream Scopes
     shared_streams = session.query(CourseStream).filter_by(course_id=course_id).all()
     if course.stream_id:
         stream_ids = {course.stream_id}
@@ -44,11 +83,16 @@ def get_course_scopes(session, course_id):
     return dept_str, stream_str
 
 
+# -----------------------------------------------------------------------------
+# MAIN DASHBOARD (No Curriculum Filter)
+# -----------------------------------------------------------------------------
 @app.route('/')
 def index():
     session = Session()
     try:
+        # Fetch all courses unconditionally
         courses = session.query(Course).order_by(Course.year_level, Course.semester_offered).all()
+        
         enriched_courses = []
         for course in courses:
             dept_scope, stream_scope = get_course_scopes(session, course.id)
@@ -64,13 +108,18 @@ def index():
                 'stream_scope': stream_scope,
                 'special_requirement': course.special_requirement
             })
+            
         return render_template('index.html', courses=enriched_courses)
     finally:
         session.close()
 
 
+# -----------------------------------------------------------------------------
+# COURSE MANIPULATION (No Curriculum Parameter Handling)
+# -----------------------------------------------------------------------------
 @app.route('/course/add', methods=['GET', 'POST'])
 @app.route('/course/edit/<int:course_id>', methods=['GET', 'POST'])
+@admin_required
 def edit_course(course_id=None):
     session = Session()
     try:
@@ -101,8 +150,6 @@ def edit_course(course_id=None):
             credit_hours = int(request.form['credit_hours'])
             year_level = int(request.form['year_level'])
             semester_offered = int(request.form['semester_offered'])
-            
-            # IMPROVEMENT: Free-text writable special structural rule
             special_requirement = request.form.get('special_requirement', '').strip()
             is_droppable = 'is_droppable' in request.form
             
@@ -111,12 +158,6 @@ def edit_course(course_id=None):
 
             primary_dept_id = selected_dept_ids[0] if selected_dept_ids else None
             primary_stream_id = selected_stream_ids[0] if len(selected_stream_ids) == 1 else None
-
-            active_cv = session.query(CurriculumVersion).filter_by(is_active=True).first()
-            if not active_cv:
-                active_cv = CurriculumVersion(version_name="ECE-Curriculum-2022", is_active=True)
-                session.add(active_cv)
-                session.flush()
 
             if not course:
                 course = Course(
@@ -127,7 +168,6 @@ def edit_course(course_id=None):
                     semester_offered=semester_offered,
                     department_id=primary_dept_id,
                     stream_id=primary_stream_id,
-                    curriculum_version_id=active_cv.id,
                     special_requirement=special_requirement if special_requirement else None,
                     is_droppable=is_droppable
                 )
@@ -171,6 +211,7 @@ def edit_course(course_id=None):
 
 
 @app.route('/course/retire/<int:course_id>', methods=['POST'])
+@admin_required
 def retire_course(course_id):
     session = Session()
     try:
@@ -192,6 +233,7 @@ def retire_course(course_id):
 
 
 @app.route('/prerequisites', methods=['GET', 'POST'])
+@admin_required
 def manage_prerequisites():
     session = Session()
     try:
@@ -206,8 +248,6 @@ def manage_prerequisites():
             course_id = int(request.form['course_id'])
             selected_prereq_ids = [int(x) for x in request.form.getlist('prerequisite_course_ids')]
             selected_stream_ids = [int(x) for x in request.form.getlist('applicable_stream_ids')]
-            
-            # IMPROVEMENT: Read custom narrative description for this relationship link
             prereq_note = request.form.get('note', '').strip()
 
             if not selected_prereq_ids:
@@ -228,26 +268,21 @@ def manage_prerequisites():
                         existing.note = prereq_note if prereq_note else None
                     else:
                         session.add(Prerequisite(
-                            course_id=course_id,
-                            prerequisite_course_id=prereq_id,
-                            applicable_stream_id=None,
-                            note=prereq_note if prereq_note else None
+                            course_id=course_id, prerequisite_course_id=prereq_id,
+                            applicable_stream_id=None, note=prereq_note if prereq_note else None
                         ))
                 else:
                     for stream_id in selected_stream_ids:
                         existing = session.query(Prerequisite).filter_by(
-                            course_id=course_id, 
-                            prerequisite_course_id=prereq_id,
+                            course_id=course_id, prerequisite_course_id=prereq_id,
                             applicable_stream_id=stream_id
                         ).first()
                         if existing:
                             existing.note = prereq_note if prereq_note else None
                         else:
                             session.add(Prerequisite(
-                                course_id=course_id,
-                                prerequisite_course_id=prereq_id,
-                                applicable_stream_id=stream_id,
-                                note=prereq_note if prereq_note else None
+                                course_id=course_id, prerequisite_course_id=prereq_id,
+                                applicable_stream_id=stream_id, note=prereq_note if prereq_note else None
                             ))
             
             session.commit()
@@ -256,17 +291,15 @@ def manage_prerequisites():
 
         return render_template(
             'prerequisites.html', 
-            courses=courses, 
-            streams=streams, 
-            prereqs=prereq_mappings, 
-            course_map=course_map,
-            stream_map=stream_map
+            courses=courses, streams=streams, prereqs=prereq_mappings, 
+            course_map=course_map, stream_map=stream_map
         )
     finally:
         session.close()
 
 
 @app.route('/prerequisites/delete/<int:prereq_link_id>', methods=['POST'])
+@admin_required
 def delete_prerequisite(prereq_link_id):
     session = Session()
     try:
@@ -283,16 +316,13 @@ def delete_prerequisite(prereq_link_id):
     return redirect(url_for('manage_prerequisites'))
 
 
-# -----------------------------------------------------------------------------
-# FIX: Fully compatible with your original key-value tabular rules.html layout
-# -----------------------------------------------------------------------------
 @app.route('/campus-rules', methods=['GET', 'POST'])
 @app.route('/campus_rules', methods=['GET', 'POST'])
+@admin_required
 def campus_rules():
     session = Session()
     try:
         if request.method == 'POST':
-            # Identify which individual rule row is being saved
             rule_id = int(request.form['rule_id'])
             new_value = float(request.form['rule_value'])
             
@@ -301,30 +331,20 @@ def campus_rules():
                 rule_to_update.rule_value = new_value
                 session.commit()
                 flash(f"Rule '{rule_to_update.rule_key}' updated to {new_value} successfully!", "success")
-            else:
-                flash("Rule identifier not found.", "danger")
             return redirect(url_for('campus_rules'))
 
-        # Fetch all operational rules for the table iteration loop
         all_rules = session.query(CampusRule).all()
-        
-        # Seed default key-value rules if the table is completely empty
         if not all_rules:
             default_rules = [
-                CampusRule(rule_key="MAX_CREDITS_REGULAR", rule_value=22.0, description="Maximum standard credit load allowed per semester for normal students."),
-                CampusRule(rule_key="MAX_CREDITS_PROBATION", rule_value=12.0, description="Restricted credit limit forced upon students on academic probation."),
-                CampusRule(rule_key="ALLOW_ADVISOR_OVERRIDES", rule_value=1.0, description="Boolean flag (1.0 for true, 0.0 for false) allowing advisor override status.")
+                CampusRule(rule_key="MAX_CREDITS_REGULAR", rule_value=22.0, description="Maximum standard credit load allowed per semester."),
+                CampusRule(rule_key="MAX_CREDITS_PROBATION", rule_value=12.0, description="Restricted credit limit for probation profiles."),
+                CampusRule(rule_key="ALLOW_ADVISOR_OVERRIDES", rule_value=1.0, description="Allows override capabilities (1.0 = true).")
             ]
             session.add_all(default_rules)
             session.commit()
             all_rules = session.query(CampusRule).all()
 
-        # Passes "rules" context variables directly into your original template
         return render_template('rules.html', rules=all_rules)
-    except Exception as e:
-        session.rollback()
-        flash(f"Operational update error: {str(e)}", "danger")
-        return redirect(url_for('index'))
     finally:
         session.close()
 

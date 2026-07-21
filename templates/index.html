@@ -2,64 +2,61 @@
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2>Course Catalog (ECE Curriculum)</h2>
-    <a href="/course/add" class="btn btn-primary shadow-sm">+ Add New Course</a>
+    <h2>Course Catalog Matrix</h2>
+    {% if session.get('is_admin') %}
+        <a href="/course/add" class="btn btn-primary">+ Add New Course Entry</a>
+    {% endif %}
 </div>
 
 <div class="card shadow-sm">
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-hover table-striped mb-0 align-middle">
+            <table class="table table-hover align-middle mb-0">
                 <thead class="table-dark">
                     <tr>
                         <th>Code</th>
                         <th>Course Name</th>
-                        <th>Credit Hrs</th>
-                        <th>Year</th>
-                        <th>Sem</th>
+                        <th>Credits</th>
+                        <th>Schedule</th>
                         <th>Department Scope</th>
-                        <th>Stream Scope</th>
-                        <th>Droppable?</th>
-                        <th class="text-center">Actions</th>
-                    </tr>
+                        <th>Applicable Stream</th>
+                        <th>Special Attributes</th>
+                        {% if session.get('is_admin') %}
+                            <th class="text-center">Actions</th>
+                        {% endif %}
+                    </tbody>
                 </thead>
                 <tbody>
                     {% for course in courses %}
                     <tr>
-                        <td><strong>{{ course.course_code }}</strong></td>
-                        <td>{{ course.name }}</td>
-                        <td>{{ course.credit_hours }}</td>
-                        <td>Year {{ course.year_level }}</td>
-                        <td>Semester {{ course.semester_offered }}</td>
+                        <td><code>{{ course.course_code }}</code></td>
+                        <td class="fw-bold">{{ course.name }}</td>
+                        <td><span class="badge bg-light text-dark border">{{ course.credit_hours }} Cr</span></td>
+                        <td>Year {{ course.year_level }}, Sem {{ course.semester_offered }}</td>
+                        <td><span class="small">{{ course.dept_scope }}</span></td>
+                        <td><span class="text-muted small">{{ course.stream_scope }}</span></td>
                         <td>
-                            {% if course.dept_scope == 'Common (College-wide)' %}
-                                <span class="badge bg-secondary">College-wide</span>
-                            {% else %}
-                                <span class="badge bg-dark">{{ course.dept_scope }}</span>
+                            {% if course.special_requirement %}
+                                <span class="badge bg-warning text-dark">{{ course.special_requirement }}</span>
+                            {% endif %}
+                            {% if not course.is_droppable %}
+                                <span class="badge bg-danger">Non-Droppable</span>
                             {% endif %}
                         </td>
-                        <td>
-                            {% if course.stream_scope == 'Common (All Streams)' %}
-                                <span class="badge bg-light text-dark border">Common (All Streams)</span>
-                            {% else %}
-                                <span class="badge bg-info text-dark">{{ course.stream_scope }}</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if course.is_droppable %}
-                                <span class="badge bg-success">Yes</span>
-                            {% else %}
-                                <span class="badge bg-danger">No</span>
-                            {% endif %}
-                        </td>
+                        {% if session.get('is_admin') %}
                         <td class="text-center">
                             <div class="d-inline-flex gap-2">
-                                <a href="/course/edit/{{ course.id }}" class="btn btn-sm btn-outline-primary">Edit</a>
-                                <form action="/course/retire/{{ course.id }}" method="POST" onsubmit="return confirm('Retire this course? This will clean up its prerequisites too.');">
+                                <a href="/course/edit/{{ course.id }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+                                <form action="/course/retire/{{ course.id }}" method="POST" onsubmit="return confirm('Are you sure you want to retire this course?');">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">Retire</button>
                                 </form>
                             </div>
                         </td>
+                        {% endif %}
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-muted">No courses registered inside the catalog.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
