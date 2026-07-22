@@ -8,7 +8,7 @@ chroma_client = chromadb.PersistentClient(path="chroma_vectors")
 collection = chroma_client.get_collection(name="ece_telegram_announcements")
 
 # Simulate a question a student would ask
-test_query = "When is the deadline for dropping classes?"
+test_query = "Can i take elective slots with other department?"
 
 print(f"🔍 Testing retrieval match query for: '{test_query}'")
 

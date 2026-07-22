@@ -3,6 +3,7 @@
 
 import os
 import asyncio
+from dotenv import load_dotenv
 from telethon import TelegramClient
 import chromadb
 
@@ -10,12 +11,13 @@ import chromadb
 # 1. TELEGRAM API CREDENTIALS & CHANNEL CONFIGURATION
 # -----------------------------------------------------------------------------
 # Replace these strings with your real credentials from my.telegram.org
-API_ID = 22156048                 # Must be an integer
-API_HASH = '608cd527c76651a9675bbacd54537ceb'   # Must be a string
+load_dotenv()
+API_ID = os.getenv("API_ID")              # Must be an integer
+API_HASH = os.getenv("API_HASH")   # Must be a string
 
 # The username or link of your custom Telegram channel
 # e.g., 'my_ece_announcements_channel' or 'https://t.me/joinchat/...'
-CHANNEL_TARGET = 'https://t.me/ece_updates' 
+CHANNEL_TARGET = os.getenv("CHANNEL_TARGET")
 
 # -----------------------------------------------------------------------------
 # 2. CHROMADB VECTOR SYSTEM SETUP
