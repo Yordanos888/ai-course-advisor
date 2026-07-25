@@ -27,16 +27,29 @@ def process_student_query(user_query: str, student_profile: dict = None) -> str:
     backend_context = ""
 
     if route == "SQL_GRAPH":
-        # Extract potential course codes using regular expressions (e.g., ECEg3201)
         course_codes = re.findall(r'[A-Za-z]{3,4}g?\d{4}', user_query)
+
         if not course_codes:
-            return ("⚠️ I recognized you are asking about course curriculum facts, "
-                    "but I couldn't isolate a specific course code (e.g., ECEg3201). "
-                    "Could you please specify which course code you are interested in?")
+            # fall bak to name-based search before giving up
+            from query_api import search_course_by_name
+            matches = search_course_by_name(user_query)
 
-        target_code = course_codes[0]
+            if not matches:
+                return("⚠️ I couldn't identify a specific course from your question. "
+                    "Could you give me the course code (e.g., ECEg3201) or its full name?")
 
-        # Pull core structured details and cascade block maps from Phase 1
+            top_score = matches[0][0]
+            tied_at_top = [c for score, c in matches if score == top_score]
+
+            if len(tied_at_top) > 1:
+                # ambigous then dont guess
+                options = "\n".join(f"- `{c.course_code}`: {c.name}" for c in tied_at_top[:5])
+                return (f"I found a few courses that might match -- which one did you mean?\n{options}")
+
+            target_code = tied_at_top[0].course_code
+        else: 
+            target_code = course_codes[0]
+
         details = get_course_details(target_code)
         if not details:
             return (f"🛑 Escalation Notice: I cannot locate the course `{target_code}` in the "
@@ -81,11 +94,14 @@ def process_student_query(user_query: str, student_profile: dict = None) -> str:
 
 Strict rules you must follow:
 - Base your response ENTIRELY on the Verified Backend Context you are given below.
+- Include every relevant detail present in the context -- do not drop specifics for
+  brevity. For example, if a course listing specifies which stream(s) it applies to,
+  state that explicitly; do not just list the course code.
 - If a detail (a course name, a reason, a policy) is not present in the context, do not invent it --
   omit it or say it isn't specified, rather than making up a plausible-sounding explanation.
 - If a course name is not given in the context, refer to it only by its course code.
-- Explain the 'why' behind requirements only using what the context actually states.
-- Keep your tone warm and clear, but do not pad your answer with invented elaboration."""
+- Be concise: deliver only the relevant information, with enough explanation to be
+  clear, but no padding, no repeated phrasing, and no unnecessary elaboration."""
 
     synthesis_prompt = f"""Student Query: {user_query}
 

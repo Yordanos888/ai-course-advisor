@@ -395,3 +395,25 @@ def get_common_course_offering_alternatives(course_code):
         return f"Course '{course.course_code}' is not flagged as shared with other departments."
 
     return [s.context_note for s in shares]
+
+def search_course_by_name(query_text):
+    """
+    Fuzzy course lookup by name/keywords, used as a fallback when no course
+    CODE pattern is found in the user's message.
+    """
+    stopwords = {"the", "a", "an", "is", "for", "what", "course", "about", "of", "to", "in"}
+    words = [w.strip(".,?!").lower() for w in query_text.split()]
+    keywords = [w for w in words if w and w not in stopwords and len(w) > 2]
+    if not keywords:
+        return []
+
+    all_courses = session.query(Course).all()
+    scored = []
+    for c in all_courses:
+        name_lower = c.name.lower()
+        match_count = sum(1 for kw in keywords if kw in name_lower)
+        if match_count > 0:
+            scored.append((match_count, c))
+
+    scored.sort(key=lambda x: -x[0])
+    return scored
