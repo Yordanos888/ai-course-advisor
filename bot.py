@@ -2,7 +2,9 @@ import os
 import logging
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from orchestrator import process_student_query
+from profile_parser import parse_profile_answer
 from query_api import (
     get_eligible_courses, 
     check_course_registration_violations, 
@@ -10,6 +12,7 @@ from query_api import (
     get_course_details,
     get_downstream_impact
 )
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -159,6 +162,44 @@ async def alternatives_command(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logger.error(e)
 
+async def chat_handler(update, context):
+    """
+    Handles free-text (non-command) messages. Maintains a per-user profile and
+    a 'waiting for profile info' state across the conversation using
+    context.user_data, which python-telegram-bot persists per chat.
+    """
+    user_text = update.message.text.strip()
+    user_data = context.user_data
+    profile = user_data.setdefault('profile', {"year": None, "semester": None, "stream": None})
+
+    if user_data.get('awaiting_profile'):
+        # This message is the student's answer to our earlier profile question --
+        # merge whatever we can parse into their stored profile, then retry
+        # their ORIGINAL question with the updated profile.
+        parsed = parse_profile_answer(user_text)
+        for k, v in parsed.items():
+            if v:
+                profile[k] = v
+
+        pending_query = user_data.get('pending_query', user_text)
+        result = process_student_query(pending_query, profile)
+
+        if result['route'] == 'STATUS_CHECK':
+            # Still missing something -- keep waiting, ask again (the router's
+            # own message will reflect exactly what's still missing).
+            await update.message.reply_text(result['response'])
+        else:
+            user_data['awaiting_profile'] = False
+            user_data.pop('pending_query', None)
+            await update.message.reply_text(result['response'])
+        return
+
+    # A normal, new question
+    result = process_student_query(user_text, profile)
+    if result['route'] == 'STATUS_CHECK':
+        user_data['awaiting_profile'] = True
+        user_data['pending_query'] = user_text
+    await update.message.reply_text(result['response'])
 
 def main():
     if not TELEGRAM_BOT_TOKEN:
@@ -173,7 +214,7 @@ def main():
     app.add_handler(CommandHandler("eligible", eligible_command))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("alternatives", alternatives_command))
-
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_handler))
     app.run_polling()
 
 if __name__ == "__main__":

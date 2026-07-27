@@ -14,9 +14,17 @@ def process_student_query(user_query: str, student_profile: dict = None) -> str:
     4. Generates a transparent, grounded natural language answer using llama3.1.
     """
 
+    """
+    Returns {"response": str, "route": str} instead of a bare string, so callers
+    (like bot.py) can tell whether this was a STATUS_CHECK that needs follow-up,
+    without re-running the router a second time.
+    """
     # Step 1: Run the gateway intent analysis & profile structural check
     routing_result = route_and_validate(user_query, student_profile)
     route = routing_result["route"]
+
+    if route == "STATUS_CHECK" or route == "ROUTING_FAILED":
+        return {"response": routing_result["response"], "route": route}
 
     # If the user needs to provide profile metrics, or routing itself failed,
     # return the router's own message directly -- no backend call to make.
@@ -111,4 +119,4 @@ Verified Backend Context:
 Write your advisor response now."""
 
     ai_response = generate_response(synthesis_prompt, temperature=0.3, system=synthesis_system_prompt).strip()
-    return ai_response
+    return {"response": ai_response, "route": route}
