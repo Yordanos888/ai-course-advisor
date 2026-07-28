@@ -150,6 +150,7 @@ class Student(Base):
     __tablename__ = 'students'
     
     id = Column(String, primary_key=True) 
+    telegram_user_id = Column(String, unique=True, nullable=True)  # NEW
     name = Column(String, nullable=False)
     batch_id = Column(Integer, ForeignKey('batches.id'), nullable=False)
     stream_id = Column(Integer, ForeignKey('streams.id'), nullable=True) 

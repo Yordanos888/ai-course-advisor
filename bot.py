@@ -1,221 +1,137 @@
-import os
-import logging
-from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from intent_router import classify_route
 from orchestrator import process_student_query
-from profile_parser import parse_profile_answer
-from query_api import (
-    get_eligible_courses, 
-    check_course_registration_violations, 
-    get_common_course_offering_alternatives,
-    get_course_details,
-    get_downstream_impact
+from student_service import (
+    get_student_by_telegram_id, link_telegram_account,
+    get_derived_profile, set_student_stream, looks_like_student_id
 )
+from reasoning_intake import needs_stream, extract_courses_from_reply, record_course_statuses
 
 
-# Load environment variables from .env file
-load_dotenv()
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-# Enable logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-
-# Command: /start
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "👋 Welcome to the ECE Academic Advisor Bot (V1)!\n\n"
-        "Here are the core commands you can use to query our curriculum:\n\n"
-        "ℹ️ *Plain Course Details (No Student needed):*\n"
-        "`/course <course_code>`\n"
-        "_Example:_ `/course ECEg3201`\n\n"
-        "💥 *Trace Downstream Impact of Failing/Dropping:*\n"
-        "`/downstream <course_code>`\n"
-        "_Example:_ `/downstream ECEg3201`\n\n"
-        "🔍 *Check Course Eligibility:*\n"
-        "`/eligible <student_id>`\n"
-        "_Example:_ `/eligible ETS/1234/14`\n\n"
-        "⚠️ *Validate Custom Registration List:*\n"
-        "`/check <student_id> <course_codes>`\n"
-        "_Example:_ `/check ETS/5678/14 ECEg5108`\n\n"
-        "🔄 *Find Course Alternatives:*\n"
-        "`/alternatives <course_code>`\n"
-        "_Example:_ `/alternatives Math1014`"
+    telegram_user_id = str(update.effective_user.id)
+    student = get_student_by_telegram_id(telegram_user_id)
+    if student:
+        await update.message.reply_text(f"👋 Welcome back, {student.name}! Ask me anything about your courses.")
+        return
+    context.user_data['awaiting_id'] = True
+    await update.message.reply_text(
+        "👋 Welcome to the ECE Academic Advisor Bot!\n\n"
+        "Before we start, please send me your student ID (e.g. ETS/1444/13) so I can pull up your record."
     )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
 
-# course_command: skip the Stream Scope line when details['stream'] is None
-async def course_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Please provide a Course Code.\nUsage: `/course ECEg3201`", parse_mode="Markdown")
-        return
-
-    course_code = context.args[0].strip()
-    details = get_course_details(course_code)
-
-    if not details:
-        await update.message.reply_text(f"❌ Course `{course_code}` not found in the loaded curriculum.", parse_mode="Markdown")
-        return
-
-    response = (
-        f"📖 *Course Details: {details['code']}*\n\n"
-        f"🔹 *Name:* {details['name']}\n"
-        f"🔹 *Credit Hours:* {details['credit_hours']} Cr. Hrs\n"
-        f"🔹 *Standing:* Year {details['year_level']}, Semester {details['semester']}\n"
-        f"🔹 *Department Scope:* {details['scope']}\n"
-    )
-    if details['stream'] is not None:  # FIX: omit entirely before streams are chosen (Y4S2+)
-        response += f"🔹 *Stream Scope:* {details['stream']}\n"
-    response += f"🔹 *Prerequisites:*\n" + "\n".join(f"   • {p}" for p in details['prerequisites'])
-
-    await update.message.reply_text(response, parse_mode="Markdown")
-
-
-# downstream_command: use the renamed 'applies_to_streams' key
-async def downstream_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Please provide a Course Code.\nUsage: `/downstream ECEg3201`", parse_mode="Markdown")
-        return
-
-    course_code = context.args[0].strip()
-    target_course, impacted = get_downstream_impact(course_code)
-
-    if not target_course:
-        await update.message.reply_text(f"❌ Course `{course_code}` not found in the curriculum.", parse_mode="Markdown")
-        return
-
-    response = f"💥 *Downstream Prerequisite Block Cascade*\n"
-    response += f"If a student fails/drops `{target_course.course_code}` ({target_course.name}), they will cascadingly be blocked from:\n\n"
-
-    if not impacted:
-        response += "_None! This course is a dead-end terminal course with no downstream dependents._"
-    else:
-        for course in impacted:
-            response += (
-                f"• `{course['course_code']}` — {course['name']}\n"
-                f"   📍 *Standing:* Year {course['year_level']}, Sem {course['semester_offered']}\n"
-                f"   📍 *Applies to:* {course['applies_to_streams']}\n\n"  # FIX: renamed key
-            )
-
-    await update.message.reply_text(response, parse_mode="Markdown")
-
-
-# Commands from before (Passing along clean DB contexts)
-async def eligible_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Please provide a Student ID.\nUsage: `/eligible ETS/1234/14`", parse_mode="Markdown")
-        return
-    student_id = context.args[0].strip()
-    await update.message.reply_text(f"⏳ Querying active eligibility records for student: `{student_id}`...", parse_mode="Markdown")
-    try:
-        eligible, blocked = get_eligible_courses(student_id)
-        if not eligible and not blocked:
-            await update.message.reply_text("❌ Student ID not found.")
-            return
-        response = f"📋 *Academic Eligibility Report for {student_id}*\n\n✅ *Eligible Courses:*\n"
-        response += "\n".join([f"• `{c.course_code}` — {c.name}" for c in eligible]) if eligible else "_None_\n"
-        response += "\n\n❌ *Blocked Courses:*\n"
-        if blocked:
-            for course, missing in blocked:
-                response += f"• `{course.course_code}` — {course.name}\n"
-                for reason in missing:
-                    response += f"   ⚠️ _{reason}_\n"
-        else:
-            response += "_None_"
-        await update.message.reply_text(response, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(e)
-        await update.message.reply_text("❌ Database query error.")
-
-async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) < 2:
-        await update.message.reply_text("❌ Missing parameters!\nUsage: `/check <student_id> <course_code>`", parse_mode="Markdown")
-        return
-    student_id = context.args[0].strip()
-    proposed_courses = [code.strip() for code in context.args[1:]]
-    try:
-        violations = check_course_registration_violations(student_id, proposed_courses)
-        if not violations:
-            await update.message.reply_text(f"🎉 *No violations!* Student `{student_id}` is cleared.", parse_mode="Markdown")
-        else:
-            response = f"⚠️ *Registration Blocked!*:\n\n" + "\n".join([f"🛑 {v}" for v in violations])
-            await update.message.reply_text(response, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(e)
-
-async def alternatives_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        return
-    course_code = context.args[0].strip()
-    try:
-        alternatives = get_common_course_offering_alternatives(course_code)
-        if isinstance(alternatives, str):
-            await update.message.reply_text(f"ℹ️ {alternatives}")
-        else:
-            await update.message.reply_text(f"🔄 *Alternatives:*\n\n" + "\n".join([f"📍 {alt}" for alt in alternatives]), parse_mode="Markdown")
-    except Exception as e:
-        logger.error(e)
-
-async def chat_handler(update, context):
-    """
-    Handles free-text (non-command) messages. Maintains a per-user profile and
-    a 'waiting for profile info' state across the conversation using
-    context.user_data, which python-telegram-bot persists per chat.
-    """
+async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_user_id = str(update.effective_user.id)
     user_text = update.message.text.strip()
     user_data = context.user_data
-    profile = user_data.setdefault('profile', {"year": None, "semester": None, "stream": None})
 
-    if user_data.get('awaiting_profile'):
-        # This message is the student's answer to our earlier profile question --
-        # merge whatever we can parse into their stored profile, then retry
-        # their ORIGINAL question with the updated profile.
-        parsed = parse_profile_answer(user_text)
-        for k, v in parsed.items():
-            if v:
-                profile[k] = v
+    student = get_student_by_telegram_id(telegram_user_id)
 
-        pending_query = user_data.get('pending_query', user_text)
-        result = process_student_query(pending_query, profile)
-
-        if result['route'] == 'STATUS_CHECK':
-            # Still missing something -- keep waiting, ask again (the router's
-            # own message will reflect exactly what's still missing).
-            await update.message.reply_text(result['response'])
-        else:
-            user_data['awaiting_profile'] = False
-            user_data.pop('pending_query', None)
-            await update.message.reply_text(result['response'])
+    # --- Mandatory gate: must be linked before anything else works ---
+    if not student:
+        if not looks_like_student_id(user_text):
+            await update.message.reply_text(
+                "Please send me your student ID first (e.g. ETS/1444/13) -- it's required to get started."
+            )
+            return
+        ok, msg = link_telegram_account(telegram_user_id, user_text)
+        await update.message.reply_text(("✅ " if ok else "❌ ") + msg)
         return
 
-    # A normal, new question
-    result = process_student_query(user_text, profile)
-    if result['route'] == 'STATUS_CHECK':
-        user_data['awaiting_profile'] = True
+    # --- Mid-intake: waiting on stream ---
+    if user_data.get('reasoning_stage') == 'STREAM':
+        ok, msg = set_student_stream(student, user_text)
+        if not ok:
+            await update.message.reply_text("❌ " + msg + " Please try again.")
+            return
+        user_data['reasoning_stage'] = 'FAILED_DROPPED'
+        await update.message.reply_text(
+            msg + "\n\nB. Do you have any courses you failed or dropped? "
+                  "If so, list them (course code or name) and say whether each was failed or dropped. "
+                  "If not, just say 'no'."
+        )
+        return
+
+    # --- Mid-intake: waiting on failed/dropped courses ---
+    if user_data.get('reasoning_stage') == 'FAILED_DROPPED':
+        resolved = extract_courses_from_reply(user_text, kind="FAILED_DROPPED")
+        if resolved is None:
+            await update.message.reply_text("I didn't quite catch that -- could you rephrase which courses you failed or dropped, if any?")
+            return
+        recorded, unresolved = record_course_statuses(student, resolved)
+        note = f"Recorded: {', '.join(recorded)}. " if recorded else ""
+        if unresolved:
+            note += f"⚠️ Couldn't identify: {', '.join(unresolved)} -- please check the course code/name."
+        user_data['reasoning_stage'] = 'ADVANCED'
+        await update.message.reply_text(
+            note + "\n\nC. Have you added and PASSED any course(s) ahead of your normal schedule "
+                   "(e.g. a future-semester course taken early)? If so, list them. If not, say 'no'."
+        )
+        return
+
+    # --- Mid-intake: waiting on advanced/pulled-forward courses ---
+    if user_data.get('reasoning_stage') == 'ADVANCED':
+        resolved = extract_courses_from_reply(user_text, kind="ADVANCED")
+        if resolved is None:
+            await update.message.reply_text("I didn't quite catch that -- could you rephrase which courses you took ahead of schedule, if any?")
+            return
+        recorded, unresolved = record_course_statuses(student, resolved)
+        note = f"Recorded: {', '.join(recorded)}. " if recorded else ""
+        if unresolved:
+            note += f"⚠️ Couldn't identify: {', '.join(unresolved)}."
+
+        pending_query = user_data.pop('pending_query', user_text)
+        user_data['reasoning_stage'] = None
+        route = classify_route(user_text)
+        result = process_student_query(pending_query, "REASONING_ENGINE", get_derived_profile(student))
+        result = process_student_query(user_text, route, None)
+        await update.message.reply_text(note + "\n\n" + result['response'])
+        return
+
+    # --- Normal, new question ---
+    route = classify_route(user_text)
+
+    if route == "ROUTING_FAILED":
+        await update.message.reply_text("⚠️ I had trouble understanding that. Could you rephrase?")
+        return
+
+    if route == "REASONING_ENGINE":
+        profile = get_derived_profile(student)
         user_data['pending_query'] = user_text
+
+        if needs_stream(student, profile):
+            user_data['reasoning_stage'] = 'STREAM'
+            await update.message.reply_text(
+                "To help plan your path, a few quick questions:\n\n"
+                "A. What is your stream? (Computer, Communication, Control, or Power)"
+            )
+            return
+
+        user_data['reasoning_stage'] = 'FAILED_DROPPED'
+        await update.message.reply_text(
+            "A. Your batch/semester is already on file.\n\n"
+            "B. Do you have any courses you failed or dropped? "
+            "If so, list them (course code or name) and say whether each was failed or dropped. "
+            "If not, just say 'no'."
+        )
+        return
+
+    # SQL_GRAPH / RAG_TELEGRAM -- no profile questions at all, per your spec
+    result = process_student_query(user_text, None)
     await update.message.reply_text(result['response'])
 
-def main():
-    if not TELEGRAM_BOT_TOKEN:
-        print("❌ Error: TELEGRAM_BOT_TOKEN not found in environment. Did you set up your .env file?")
-        return
-    print("🤖 Launching Phase 2 Telegram Bot (With secure token & full V1 Commands)...")
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
+def main():
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    app = Application.builder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("course", course_command))
-    app.add_handler(CommandHandler("downstream", downstream_command))
-    app.add_handler(CommandHandler("eligible", eligible_command))
-    app.add_handler(CommandHandler("check", check_command))
-    app.add_handler(CommandHandler("alternatives", alternatives_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_handler))
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
