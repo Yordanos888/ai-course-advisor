@@ -152,7 +152,7 @@ class Student(Base):
     id = Column(String, primary_key=True) 
     telegram_user_id = Column(String, unique=True, nullable=True)  # NEW
     name = Column(String, nullable=False)
-    batch_id = Column(Integer, ForeignKey('batches.id'), nullable=False)
+    batch_id = Column(Integer, ForeignKey('batches.id'), nullable=True)
     stream_id = Column(Integer, ForeignKey('streams.id'), nullable=True) 
     cgpa = Column(Float, nullable=True) 
     status = Column(String, default="ACTIVE") 

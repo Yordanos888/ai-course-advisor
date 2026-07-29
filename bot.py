@@ -3,10 +3,14 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from intent_router import classify_route
 from orchestrator import process_student_query
 from student_service import (
-    get_student_by_telegram_id, link_telegram_account,
-    get_derived_profile, set_student_stream, looks_like_student_id
+    get_student_by_telegram_id, register_or_link_student,
+    get_derived_profile, needs_batch_semester, needs_stream,
+    set_student_stream, looks_like_student_id
 )
-from reasoning_intake import needs_stream, extract_courses_from_reply, record_course_statuses
+from academic_intake import assign_batch_from_reply
+from reasoning_intake import extract_courses_from_reply, record_course_statuses
+
+ECE_DEPARTMENT_ID = 1  # single-department system for now
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -15,10 +19,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if student:
         await update.message.reply_text(f"👋 Welcome back, {student.name}! Ask me anything about your courses.")
         return
-    context.user_data['awaiting_id'] = True
     await update.message.reply_text(
         "👋 Welcome to the ECE Academic Advisor Bot!\n\n"
-        "Before we start, please send me your student ID (e.g. ETS/1444/13) so I can pull up your record."
+        "Please send me your student ID (e.g. ETS/1444/13) to register."
     )
 
 
@@ -29,15 +32,34 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     student = get_student_by_telegram_id(telegram_user_id)
 
-    # --- Mandatory gate: must be linked before anything else works ---
+    # --- Mandatory gate: registration (create-or-fetch, ID only) ---
     if not student:
         if not looks_like_student_id(user_text):
             await update.message.reply_text(
                 "Please send me your student ID first (e.g. ETS/1444/13) -- it's required to get started."
             )
             return
-        ok, msg = link_telegram_account(telegram_user_id, user_text)
+        ok, msg = register_or_link_student(telegram_user_id, user_text)
         await update.message.reply_text(("✅ " if ok else "❌ ") + msg)
+        return
+
+    # --- Mid-intake: waiting on batch/semester ---
+    if user_data.get('reasoning_stage') == 'BATCH_SEMESTER':
+        ok, msg = assign_batch_from_reply(student, user_text, ECE_DEPARTMENT_ID)
+        if not ok:
+            await update.message.reply_text("❌ " + msg)
+            return
+        profile = get_derived_profile(student)
+        if needs_stream(student, profile):
+            user_data['reasoning_stage'] = 'STREAM'
+            await update.message.reply_text(msg + "\n\nWhat is your stream? (Computer, Communication, Control, or Power)")
+            return
+        user_data['reasoning_stage'] = 'FAILED_DROPPED'
+        await update.message.reply_text(
+            msg + "\n\nDo you have any courses you failed or dropped? "
+                  "If so, list them (course code or name) and say whether each was failed or dropped. "
+                  "If not, just say 'no'."
+        )
         return
 
     # --- Mid-intake: waiting on stream ---
@@ -48,7 +70,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         user_data['reasoning_stage'] = 'FAILED_DROPPED'
         await update.message.reply_text(
-            msg + "\n\nB. Do you have any courses you failed or dropped? "
+            msg + "\n\nDo you have any courses you failed or dropped? "
                   "If so, list them (course code or name) and say whether each was failed or dropped. "
                   "If not, just say 'no'."
         )
@@ -66,7 +88,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             note += f"⚠️ Couldn't identify: {', '.join(unresolved)} -- please check the course code/name."
         user_data['reasoning_stage'] = 'ADVANCED'
         await update.message.reply_text(
-            note + "\n\nC. Have you added and PASSED any course(s) ahead of your normal schedule "
+            note + "\n\nHave you added and PASSED any course(s) ahead of your normal schedule "
                    "(e.g. a future-semester course taken early)? If so, list them. If not, say 'no'."
         )
         return
@@ -82,11 +104,11 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if unresolved:
             note += f"⚠️ Couldn't identify: {', '.join(unresolved)}."
 
+        # FIXED: only ONE call now, using the ORIGINAL pending question -- the
+        # duplicate/overwriting second call from last round is gone.
         pending_query = user_data.pop('pending_query', user_text)
         user_data['reasoning_stage'] = None
-        route = classify_route(user_text)
         result = process_student_query(pending_query, "REASONING_ENGINE", get_derived_profile(student))
-        result = process_student_query(user_text, route, None)
         await update.message.reply_text(note + "\n\n" + result['response'])
         return
 
@@ -101,25 +123,31 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         profile = get_derived_profile(student)
         user_data['pending_query'] = user_text
 
-        if needs_stream(student, profile):
-            user_data['reasoning_stage'] = 'STREAM'
+        if needs_batch_semester(profile):
+            user_data['reasoning_stage'] = 'BATCH_SEMESTER'
             await update.message.reply_text(
                 "To help plan your path, a few quick questions:\n\n"
-                "A. What is your stream? (Computer, Communication, Control, or Power)"
+                "What is your batch and semester? (e.g. '4th year 2nd semester')"
             )
+            return
+
+        if needs_stream(student, profile):
+            user_data['reasoning_stage'] = 'STREAM'
+            await update.message.reply_text("What is your stream? (Computer, Communication, Control, or Power)")
             return
 
         user_data['reasoning_stage'] = 'FAILED_DROPPED'
         await update.message.reply_text(
-            "A. Your batch/semester is already on file.\n\n"
-            "B. Do you have any courses you failed or dropped? "
+            "Do you have any courses you failed or dropped? "
             "If so, list them (course code or name) and say whether each was failed or dropped. "
             "If not, just say 'no'."
         )
         return
 
     # SQL_GRAPH / RAG_TELEGRAM -- no profile questions at all, per your spec
-    result = process_student_query(user_text, None)
+    # FIXED: was passing None instead of route -- this was the bug behind
+    # every "backend context is empty" response.
+    result = process_student_query(user_text, route)
     await update.message.reply_text(result['response'])
 
 

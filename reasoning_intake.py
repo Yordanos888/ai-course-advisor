@@ -94,7 +94,14 @@ def _next_attempt_number(student_id, course_id):
 def record_course_statuses(student, resolved_list):
     """Persists extracted course statuses. Returns (recorded: list, unresolved: list)."""
     batch = session.query(Batch).filter_by(id=student.batch_id).first()
-    year, sem = batch.entry_year, batch.current_semester  # approximate -- see note below
+
+    # FIX: Use current_year_level (1-5) instead of entry_year (calendar year like 2022).
+    # academic_year_taken stores the academic year LEVEL, not the calendar year.
+    # This is an approximation: we assume reported statuses reflect the student's
+    # current standing. For historical failures from prior years, the student
+    # would need to specify the year explicitly in their reply.
+    year = batch.current_year_level if batch else 1
+    sem = batch.current_semester if batch else 1
 
     recorded, unresolved = [], []
     for item in resolved_list:
@@ -107,16 +114,17 @@ def record_course_statuses(student, resolved_list):
                 student_id=student.id, course_id=item["course_id"], status="DROPPED").first()
             if existing:
                 continue  # already on record, nothing to do
-            session.add(StudentCourseStatus(student_id=student.id, course_id=item["course_id"],
-                                             attempt_number=None, academic_year_taken=year,
-                                             semester_taken=sem, status="DROPPED"))
+            session.add(StudentCourseStatus(
+                student_id=student.id, course_id=item["course_id"],
+                attempt_number=None, academic_year_taken=year,
+                semester_taken=sem, status="DROPPED"))
         else:
             attempt = _next_attempt_number(student.id, item["course_id"])
-            session.add(StudentCourseStatus(student_id=student.id, course_id=item["course_id"],
-                                             attempt_number=attempt, academic_year_taken=year,
-                                             semester_taken=sem, status=item["status"]))
+            session.add(StudentCourseStatus(
+                student_id=student.id, course_id=item["course_id"],
+                attempt_number=attempt, academic_year_taken=year,
+                semester_taken=sem, status=item["status"]))
 
-                                             
         recorded.append(item["course_code"])
 
     session.commit()
