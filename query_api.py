@@ -402,8 +402,8 @@ def search_course_by_name(query_text):
     CODE pattern is found in the user's message.
     """
     stopwords = {"the", "a", "an", "is", "for", "what", "course", "about", "of", "to", "in"}
-    words = [w.strip(".,?!").lower() for w in query_text.split()]
-    keywords = [w for w in words if w and w not in stopwords and len(w) > 2]
+    words = [w.strip(".,?!-_").lower() for w in query_text.split()]
+    keywords = [w for w in words if w and w not in stopwords and len(w) > 0]
     if not keywords:
         return []
 

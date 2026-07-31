@@ -9,13 +9,13 @@ mock_profile_comp = {"year": "4th year", "semester": "2nd semester", "stream": "
 mock_profile_cont = {"year": "4th year", "semester": "2nd semester", "stream": "Control"}
 
 # Test Case 1: Course Info Lookup (Grounded SQL Verification)
-q1 = "What are the requirements and credits for ECEg4406?" 
+q1 = "when is the date for 2027 education registration?" 
 print(f"💬 Question: {q1}")
 print(f"🤖 Advisor:\n{process_student_query(q1, mock_profile_new)['response']}\n")
 print("-" * 50)
 
 # Test Case 2: Downstream Block Impact
-q2 = "What happens if I drop or fail ECEg4406?"  
+q2 = "when is the date the internship money will be sent?"  
 print(f"💬 Question: {q2}")
 print(f"🤖 Advisor:\n{process_student_query(q2, mock_profile_comp)['response']}\n")
 print("-" * 50)
@@ -27,7 +27,7 @@ print(f"🤖 Advisor:\n{process_student_query(q3, mock_profile_new)['response']}
 print("-" * 50)
 
 # Test 4: same as test 2 but different stream
-q4 = "What happens if I drop or fail ECEg4406?"  
+q4 = "when is the deadline date for presenting internship?"  
 print(f"💬 Question: {q4}")
 print(f"🤖 Advisor:\n{process_student_query(q4, mock_profile_cont)['response']}\n")
 print("-" * 50)

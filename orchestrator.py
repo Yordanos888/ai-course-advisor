@@ -24,35 +24,55 @@ def _resolve_general_sql_query(user_query: str) -> str:
         q = user_query.lower()
 
         # ------------------------------------------------------------------
-        # 1. Year / Semester listing
+        # 1. Catalog Query (Year, Semester, Stream)
         # ------------------------------------------------------------------
         year = None
         sem = None
+        stream_obj = None
+        stream_display_name = None
 
-        # "4th year", "year 4", "year four"
-        y_match = re.search(r'(\d)(?:st|nd|rd|th)\s*year', q)
+        # Year detection
+        y_match = re.search(r'\b(1st|first|2nd|second|3rd|third|4th|fourth|5th|fifth)\s*[- ]?\s*year\b', q)
         if y_match:
-            year = int(y_match.group(1))
+            y_map = {"1st": 1, "first": 1, "2nd": 2, "second": 2, "3rd": 3, "third": 3, "4th": 4, "fourth": 4, "5th": 5, "fifth": 5}
+            year = y_map[y_match.group(1)]
         else:
             y_match = re.search(r'year\s*(\d)', q)
-            if y_match:
-                year = int(y_match.group(1))
+            if y_match: year = int(y_match.group(1))
 
-        # "1st semester", "semester 1", "sem 2"
-        s_match = re.search(r'(\d)(?:st|nd)\s*sem(?:ester)?', q)
+        # Semester detection
+        s_match = re.search(r'\b(1st|first|2nd|second)\s*[- ]?\s*sem(?:ester)?\b', q)
         if s_match:
-            sem = int(s_match.group(1))
+            s_map = {"1st": 1, "first": 1, "2nd": 2, "second": 2}
+            sem = s_map[s_match.group(1)]
         else:
             s_match = re.search(r'sem(?:ester)?\s*(\d)', q)
-            if s_match:
-                sem = int(s_match.group(1))
+            if s_match: sem = int(s_match.group(1))
 
-        if year is not None or sem is not None:
+        # Stream detection
+        stream_keywords = {
+            "computer": "Computer",
+            "communication": "Communication",
+            "control": "Control",
+            "power": "Power"
+        }
+        for keyword, name in stream_keywords.items():
+            if keyword in q and ("course" in q or "subject" in q or "class" in q):
+                stream_obj = session.query(Stream).filter(Stream.name.ilike(f"%{name}%")).first()
+                if stream_obj:
+                    stream_display_name = name
+                    break
+
+        if year is not None or sem is not None or stream_obj is not None:
             query = session.query(Course)
             if year is not None:
                 query = query.filter_by(year_level=year)
             if sem is not None:
                 query = query.filter_by(semester_offered=sem)
+            if stream_obj:
+                shared_ids = [cs.course_id for cs in session.query(CourseStream).filter_by(stream_id=stream_obj.id).all()]
+                query = query.filter((Course.stream_id == stream_obj.id) | (Course.id.in_(shared_ids)))
+            
             courses = query.order_by(Course.year_level, Course.semester_offered, Course.course_code).all()
 
             if courses:
@@ -63,41 +83,17 @@ def _resolve_general_sql_query(user_query: str) -> str:
                         f"- {c.course_code}: {c.name} ({c.credit_hours} cr) — "
                         f"Year {c.year_level}, Sem {c.semester_offered} [{dept_code}]"
                     )
+                
                 header_parts = []
+                if stream_display_name:
+                    header_parts.append(f"the {stream_display_name} Engineering stream")
                 if year:
                     header_parts.append(f"Year {year}")
                 if sem:
                     header_parts.append(f"Semester {sem}")
+                
                 header = "Catalog listing for " + ", ".join(header_parts)
                 return header + ":\n" + "\n".join(lines)
-
-        # ------------------------------------------------------------------
-        # 2. Stream-specific courses
-        # ------------------------------------------------------------------
-        stream_keywords = {
-            "computer": "Computer",
-            "communication": "Communication",
-            "control": "Control",
-            "power": "Power"
-        }
-        for keyword, stream_name in stream_keywords.items():
-            if keyword in q and ("course" in q or "subject" in q or "class" in q):
-                stream = session.query(Stream).filter(Stream.name.ilike(f"%{stream_name}%")).first()
-                if stream:
-                    direct = session.query(Course).filter_by(stream_id=stream.id).all()
-                    shared_ids = [
-                        cs.course_id for cs in
-                        session.query(CourseStream).filter_by(stream_id=stream.id).all()
-                    ]
-                    shared = session.query(Course).filter(Course.id.in_(shared_ids)).all() if shared_ids else []
-                    all_courses = {c.id: c for c in direct + shared}
-                    courses = sorted(all_courses.values(), key=lambda c: (c.year_level, c.semester_offered, c.course_code))
-                    if courses:
-                        lines = [
-                            f"- {c.course_code}: {c.name} (Year {c.year_level}, Sem {c.semester_offered})"
-                            for c in courses
-                        ]
-                        return f"Courses belonging to the {stream_name} Engineering stream:\n" + "\n".join(lines)
 
         # ------------------------------------------------------------------
         # 3. Total curriculum statistics
@@ -164,18 +160,23 @@ def process_student_query(user_query: str, route: str, student_profile: dict = N
         if course_codes:
             target_code = course_codes[0]
         else:
-            # Fallback: search by name/keywords
-            matches = search_course_by_name(user_query)
-            if matches:
-                top_score = matches[0][0]
-                tied_at_top = [c for score, c in matches if score == top_score]
-                if len(tied_at_top) > 1:
-                    options = "\n".join(f"- `{c.course_code}`: {c.name}" for c in tied_at_top[:5])
-                    return {
-                        "response": f"I found a few courses that might match — which one did you mean?\n{options}",
-                        "route": route,
-                    }
-                target_code = tied_at_top[0].course_code
+            # B. General catalog query (check this before fuzzy search)
+            general_context = _resolve_general_sql_query(user_query)
+            if general_context:
+                backend_context = general_context
+            else:
+                # C. Fallback: search by name/keywords
+                matches = search_course_by_name(user_query)
+                if matches:
+                    top_score = matches[0][0]
+                    tied_at_top = [c for score, c in matches if score == top_score]
+                    if len(tied_at_top) > 1:
+                        options = "\n".join(f"- `{c.course_code}`: {c.name}" for c in tied_at_top[:5])
+                        return {
+                            "response": f"I found a few courses that might match — which one did you mean?\n{options}",
+                            "route": route,
+                        }
+                    target_code = tied_at_top[0].course_code
 
         if target_code:
             details = get_course_details(target_code)
@@ -210,21 +211,17 @@ def process_student_query(user_query: str, route: str, student_profile: dict = N
                     backend_context += "\nDownstream Impacts: None. This is a terminal course.\n"
 
         # ------------------------------------------------------------------
-        # B. General catalog query (no specific course mentioned)
+        # D. Final validation
         # ------------------------------------------------------------------
         if not backend_context:
-            general_context = _resolve_general_sql_query(user_query)
-            if general_context:
-                backend_context = general_context
-            else:
-                return {
-                    "response": (
-                        "⚠️ I couldn't identify a specific course or catalog query from your question. "
-                        "Could you give me a course code (e.g., ECEg3201), a year/semester "
-                        "(e.g., '4th year 1st semester'), or a stream name?"
-                    ),
-                    "route": route,
-                }
+            return {
+                "response": (
+                    "⚠️ I couldn't identify a specific course or catalog query from your question. "
+                    "Could you give me a course code (e.g., ECEg3201), a year/semester "
+                    "(e.g., '4th year 1st semester'), or a stream name?"
+                ),
+                "route": route,
+            }
 
     elif route == "RAG_TELEGRAM":
         retrieved_announcement = get_educational_context(user_query, distance_threshold=0.6)
