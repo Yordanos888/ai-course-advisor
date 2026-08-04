@@ -1,24 +1,38 @@
 """
-reasoning_solver.py -- Phase 6, Step 3 (first pass / core mechanics)
+reasoning_solver.py -- Phase 6, Step 3
 
 Builds a CP-SAT model that schedules a student's remaining required courses
 across future semesters, respecting:
   - prerequisite ordering (via the NetworkX graph from Step 1)
-  - per-semester credit-hour caps (with the year-5 overload override)
+  - per-semester credit-hour caps (with the year-5 overload override, Rule C)
   - each course only schedulable into a semester slot matching its
     semester_offered PARITY (not literal calendar-year alignment -- a course
     recurs every year in its fixed parity, so from the student's perspective
-    it's available in every future slot of the matching parity)
+    it's available in every future slot of the matching parity) (Rule F),
+    UNLESS it's a Rule J flipped-parity-eligible common course (either parity)
+  - the max-years-to-graduate horizon (Rule E)
+  - retake-limit exhaustion (Rule D) -- returns a clean infeasible result,
+    never a workaround
+  - the Exit Exam / ALL_COURSES capstone (Rule B) -- detached from normal
+    slot competition, pinned to land with the last scheduled course
   - minimizing total semesters to completion
 
-NOT YET INCLUDED in this first pass (deliberately, to verify core mechanics
-before layering on complexity):
-  - special_requirement ALL_STREAM_COURSES (FYP-II) capstone handling --
-    ALL_COURSES (Exit Exam) is now handled; ALL_STREAM_COURSES is a required-set
-    assembly concern on the caller side, not scheduling logic, and isn't built yet
-  - multiple ranked solutions (only the single optimal plan for now)
-  - stream-choice comparison (Step 4)
+Two entry points:
+  - solve_recovery_plan(...)         -> single optimal plan
+  - solve_ranked_recovery_plans(...) -> top-N distinct plans, solve-then-
+                                         exclude-and-resolve, ranked by
+                                         total semesters then credit-load balance
+
+NOT YET INCLUDED (deliberately, to verify core mechanics before layering on
+complexity):
+  - special_requirement ALL_STREAM_COURSES (FYP-II) -- a required-set
+    assembly concern on the caller side, not scheduling logic
+  - stream-choice comparison (Step 4) -- same solver, run once per candidate
+    stream, compared by the caller
 """
+import statistics
+
+
 def _effective_year_level(current_year_level, current_semester, slot_offset):
     """Maps a slot offset (0 = current semester) to an approximate year_level,
     purely for credit-cap lookup purposes -- NOT used for course eligibility,
@@ -43,29 +57,14 @@ def _last_valid_slot(current_year_level, current_semester, max_years=5):
     return last_total - current_total
 
 
-def solve_recovery_plan(
-    graph,                      # NetworkX DiGraph from prerequisite_graph.py
-    required_course_ids,        # course_ids still needed (not yet PASSED)
-    already_passed_ids,         # course_ids already PASSED (used as prerequisite anchors, not scheduled)
-    current_year_level,
-    current_semester,
-    student_stream_id,          # None if not yet chosen
-    horizon_semesters=10,       # planning horizon in semester slots (upper bound; clamped to max_years)
-    general_credit_cap=18,
-    year5_credit_cap=22,
-    max_years=5,
-    flipped_parity_course_ids=frozenset(),  # Rule J: common_courses schedulable via
-                                             # either parity (partner dept offers the
-                                             # opposite parity), so no parity restriction
-    exhausted_course_ids=frozenset(),       # Rule D: courses at the 3-graded-attempt
-                                             # retake cap with no PASSED attempt --
-                                             # can never be completed, ever
-):
+def _precheck(graph, required_course_ids, exhausted_course_ids, current_year_level,
+              current_semester, max_years, horizon_semesters):
+    """Shared by both entry points. Returns (error_dict, None) if either check
+    fails, or (None, clamped_horizon_semesters) if clear to build a model."""
     # Rule D: retake-limit exhaustion makes the whole plan infeasible outright,
-    # no CP-SAT run needed (checked before importing ortools -- pure data check).
-    # This must never invent a workaround (e.g. silently dropping the course, or
-    # substituting another) -- course substitution is explicitly a human/
-    # department decision, never automated.
+    # no CP-SAT run needed. Never invent a workaround (e.g. silently dropping
+    # the course, or substituting another) -- substitution is explicitly a
+    # human/department decision, never automated.
     blocked = set(required_course_ids) & set(exhausted_course_ids)
     if blocked:
         blocked_codes = sorted(graph.nodes[cid].get('course_code', str(cid)) for cid in blocked)
@@ -76,17 +75,26 @@ def solve_recovery_plan(
                 f"for: {', '.join(blocked_codes)}. Course substitution is a department "
                 "decision, not something this solver can resolve."
             ),
-            "plan": None,
-        }
-
-    from ortools.sat.python import cp_model  # deferred: keeps helpers unit-testable without ortools installed
+        }, None
 
     last_valid = _last_valid_slot(current_year_level, current_semester, max_years)
     if last_valid < 0:
-        return {"feasible": False, "reason": "Student is already past the max-years-to-graduate horizon.", "plan": None}
-    # Clamp: never offer a slot beyond year `max_years`, regardless of horizon_semesters.
-    horizon_semesters = min(horizon_semesters, last_valid + 1)
+        return {
+            "feasible": False,
+            "reason": "Student is already past the max-years-to-graduate horizon.",
+        }, None
 
+    # Clamp: never offer a slot beyond year `max_years`, regardless of horizon_semesters.
+    return None, min(horizon_semesters, last_valid + 1)
+
+
+def _build_model(cp_model, graph, required_course_ids, already_passed_ids,
+                  current_year_level, current_semester, student_stream_id,
+                  horizon_semesters, general_credit_cap, year5_credit_cap,
+                  flipped_parity_course_ids):
+    """Builds the CP-SAT model shared by both entry points. Assumes
+    horizon_semesters has already been clamped by _precheck. Returns
+    (model, slot_var, max_slot)."""
     model = cp_model.CpModel()
 
     # Rule B / ALL_COURSES: the Exit Exam (credit_hours=0) requires literally
@@ -180,9 +188,11 @@ def solve_recovery_plan(
         model.Add(max_slot >= slot_var[cid])
     model.Minimize(max_slot)
 
-    solver = cp_model.CpSolver()
-    status = solver.Solve(model)
+    return model, slot_var, max_slot
 
+
+def _status_infeasible_result(cp_model, status):
+    """Shared status -> clean-message mapping for both entry points."""
     if status == cp_model.INFEASIBLE:
         return {
             "feasible": False,
@@ -191,21 +201,64 @@ def solve_recovery_plan(
                 "within the prerequisite ordering, credit caps, and the "
                 "max-years-to-graduate horizon."
             ),
-            "plan": None,
         }
+    # UNKNOWN / MODEL_INVALID -- the solver couldn't determine feasibility
+    # either way (e.g. search limits). Distinct from a genuine "no path
+    # exists" so the caller doesn't misreport a real answer as one.
+    return {
+        "feasible": False,
+        "reason": (
+            "Could not determine feasibility within search limits -- this is "
+            "not the same as confirming no path exists. Try again with a "
+            "larger time budget."
+        ),
+    }
+
+
+def solve_recovery_plan(
+    graph,                      # NetworkX DiGraph from prerequisite_graph.py
+    required_course_ids,        # course_ids still needed (not yet PASSED)
+    already_passed_ids,         # course_ids already PASSED (used as prerequisite anchors, not scheduled)
+    current_year_level,
+    current_semester,
+    student_stream_id,          # None if not yet chosen
+    horizon_semesters=10,       # planning horizon in semester slots (upper bound; clamped to max_years)
+    general_credit_cap=18,
+    year5_credit_cap=22,
+    max_years=5,
+    flipped_parity_course_ids=frozenset(),  # Rule J: common_courses schedulable via
+                                             # either parity (partner dept offers the
+                                             # opposite parity), so no parity restriction
+    exhausted_course_ids=frozenset(),       # Rule D: courses at the 3-graded-attempt
+                                             # retake cap with no PASSED attempt --
+                                             # can never be completed, ever
+):
+    """Single optimal plan (fewest total semesters). See solve_ranked_recovery_plans
+    for multiple ranked alternatives."""
+    error, horizon_semesters = _precheck(
+        graph, required_course_ids, exhausted_course_ids,
+        current_year_level, current_semester, max_years, horizon_semesters,
+    )
+    if error is not None:
+        error["plan"] = None
+        return error
+
+    from ortools.sat.python import cp_model  # deferred: keeps helpers unit-testable without ortools installed
+
+    model, slot_var, max_slot = _build_model(
+        cp_model, graph, required_course_ids, already_passed_ids,
+        current_year_level, current_semester, student_stream_id,
+        horizon_semesters, general_credit_cap, year5_credit_cap,
+        flipped_parity_course_ids,
+    )
+
+    solver = cp_model.CpSolver()
+    status = solver.Solve(model)
+
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        # UNKNOWN / MODEL_INVALID -- the solver couldn't determine feasibility
-        # either way (e.g. search limits). Distinct from a genuine "no path
-        # exists" so the caller doesn't misreport a real answer as one.
-        return {
-            "feasible": False,
-            "reason": (
-                "Could not determine feasibility within search limits -- this is "
-                "not the same as confirming no path exists. Try again with a "
-                "larger time budget."
-            ),
-            "plan": None,
-        }
+        result = _status_infeasible_result(cp_model, status)
+        result["plan"] = None
+        return result
 
     plan = {}
     for cid in required_course_ids:
@@ -217,3 +270,124 @@ def solve_recovery_plan(
         "total_semesters_used": solver.Value(max_slot) + 1,
         "plan": plan,  # {slot_offset: [course_ids]}
     }
+
+
+def _credit_load_by_slot(graph, plan):
+    """{slot_offset: total_credit_hours} for a plan, used as a risk/balance
+    signal when ranking multiple plans with the same total_semesters_used."""
+    return {
+        s: sum(graph.nodes[cid]['credit_hours'] for cid in cids)
+        for s, cids in plan.items()
+    }
+
+
+def solve_ranked_recovery_plans(
+    graph,
+    required_course_ids,
+    already_passed_ids,
+    current_year_level,
+    current_semester,
+    student_stream_id,
+    horizon_semesters=10,
+    general_credit_cap=18,
+    year5_credit_cap=22,
+    max_years=5,
+    flipped_parity_course_ids=frozenset(),
+    exhausted_course_ids=frozenset(),
+    top_n=3,
+):
+    """Multiple distinct plans, all tied at the minimum total_semesters_used --
+    via solve-then-exclude-and-resolve: solve once, forbid that EXACT full
+    slot assignment, resolve, repeat up to top_n times. Stops early, and may
+    return FEWER than top_n plans, if either (a) the model runs out of
+    distinct feasible assignments, or (b) the next distinct assignment found
+    is strictly longer than the first (best) one -- this function never pads
+    results with slower alternatives just to hit top_n.
+
+    CP-SAT's objective (minimize total semesters) still applies on every
+    resolve against the same model, so plans are discovered best-first: all
+    optimal-total-semesters assignments get exhausted before the loop stops.
+    Among the (tied-length) plans returned, ranking is by credit-load balance
+    (lower stdev across used semesters = less cramming into any single
+    semester = lower risk).
+
+    Returns {"feasible": bool, "reason": str (only if infeasible),
+             "plans": [{"total_semesters_used": int, "plan": {...},
+                        "credit_load_by_slot": {...}}, ...]} -- best first,
+             all sharing the same total_semesters_used.
+    """
+    if top_n < 1:
+        raise ValueError(f"top_n must be >= 1, got {top_n}")
+
+    error, horizon_semesters = _precheck(
+        graph, required_course_ids, exhausted_course_ids,
+        current_year_level, current_semester, max_years, horizon_semesters,
+    )
+    if error is not None:
+        error["plans"] = []
+        return error
+
+    from ortools.sat.python import cp_model
+
+    model, slot_var, max_slot = _build_model(
+        cp_model, graph, required_course_ids, already_passed_ids,
+        current_year_level, current_semester, student_stream_id,
+        horizon_semesters, general_credit_cap, year5_credit_cap,
+        flipped_parity_course_ids,
+    )
+
+    solver = cp_model.CpSolver()
+    found = []
+    best_total = None
+
+    for i in range(top_n):
+        status = solver.Solve(model)
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            break  # exhausted all distinct feasible assignments (or none existed)
+
+        total_used = solver.Value(max_slot) + 1
+        if best_total is None:
+            best_total = total_used
+        elif total_used != best_total:
+            # Every subsequent resolve is >= the previous (we only ever
+            # exclude solutions, never relax constraints), so the moment
+            # we see something longer than the best, nothing further this
+            # loop could find will be tied-optimal either -- stop here
+            # rather than padding results with slower alternatives.
+            break
+
+        plan = {}
+        values = {}
+        for cid, var in slot_var.items():
+            s = solver.Value(var)
+            values[cid] = s
+            plan.setdefault(s, []).append(cid)
+
+        found.append({
+            "total_semesters_used": total_used,
+            "plan": plan,
+            "credit_load_by_slot": _credit_load_by_slot(graph, plan),
+        })
+
+        # Exclusion constraint: forbid this exact full assignment from
+        # recurring -- at least one course must land somewhere different.
+        same_bools = []
+        for cid, var in slot_var.items():
+            b = model.NewBoolVar(f"same_{cid}_{i}")
+            model.Add(var == values[cid]).OnlyEnforceIf(b)
+            model.Add(var != values[cid]).OnlyEnforceIf(b.Not())
+            same_bools.append(b)
+        model.Add(sum(same_bools) < len(same_bools))
+
+    if not found:
+        result = _status_infeasible_result(cp_model, status)
+        result["plans"] = []
+        return result
+
+    def _risk(entry):
+        loads = list(entry["credit_load_by_slot"].values())
+        return statistics.pstdev(loads) if len(loads) > 1 else 0.0
+
+    ranked = sorted(found, key=lambda e: (e["total_semesters_used"], _risk(e)))
+
+    return {"feasible": True, "plans": ranked}
