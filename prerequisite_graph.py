@@ -1,34 +1,11 @@
 """
 prerequisite_graph.py
-
-Phase 6, Step 1: loads the full prerequisite structure into a NetworkX
-DiGraph, one time, so downstream Phase 6 logic (the CP-SAT solver, downstream
-impact tracing) works against an in-memory graph instead of querying the
-database per-course.
-
-Edge direction: prerequisite_course_id -> course_id
-  (i.e. an edge points FROM the prerequisite TO the course that requires it,
-  so "descendants of X" = "everything that becomes unreachable if X isn't passed")
-
-Each node carries the course's own attributes (code, name, year_level,
-semester_offered, credit_hours, special_requirement, is_droppable, and its
-own stream scope). Each edge carries `applicable_streams`: None means the
-prerequisite applies to a student in ANY stream; otherwise a set of stream_ids
-it's restricted to.
-
-IMPORTANT: a single (course, prerequisite) pair can have MULTIPLE rows in the
-database differing only by applicable_stream_id (e.g. Integrated Design
-Project requiring "Introduction to Control System" as two separate rows --
-one scoped to Control, one scoped to Power). A plain DiGraph only supports one
-edge per node pair, so these rows are MERGED into a single edge whose
-applicable_streams is the union of all the rows' stream scopes.
 """
 import networkx as nx
 from sqlalchemy.orm import sessionmaker
 from models import engine, Course, Prerequisite, CourseStream
 
 Session = sessionmaker(bind=engine)
-
 
 def _course_stream_membership(session, course, course_streams_by_course):
     """None = common to all streams; otherwise a set of stream_ids."""
@@ -39,9 +16,12 @@ def _course_stream_membership(session, course, course_streams_by_course):
         return set(entries)
     return None
 
-
-def load_prerequisite_graph() -> nx.DiGraph:
-    session = Session()
+def load_prerequisite_graph(session=None) -> nx.DiGraph:
+    local_session = False
+    if session is None:
+        session = Session()
+        local_session = True
+        
     try:
         graph = nx.DiGraph()
 
@@ -59,22 +39,20 @@ def load_prerequisite_graph() -> nx.DiGraph:
                 year_level=c.year_level,
                 semester_offered=c.semester_offered,
                 credit_hours=c.credit_hours,
-                stream_scope=own_streams,  # None = common to all streams
+                stream_scope=own_streams, 
                 special_requirement=c.special_requirement,
                 is_droppable=c.is_droppable,
             )
 
-        # Merge rows sharing the same (course_id, prerequisite_course_id) pair
-        # into a single edge with the UNION of their applicable_streams.
-        edge_stream_union = {}   # (prereq_id, course_id) -> None (all) or set(stream_ids)
+        edge_stream_union = {} 
         for p in session.query(Prerequisite).all():
             key = (p.prerequisite_course_id, p.course_id)
             if key not in edge_stream_union:
                 edge_stream_union[key] = set() if p.applicable_stream_id is not None else None
             if edge_stream_union[key] is None:
-                continue  # already "applies to all" -- nothing can narrow that
+                continue 
             if p.applicable_stream_id is None:
-                edge_stream_union[key] = None  # any row with no restriction makes the whole edge unrestricted
+                edge_stream_union[key] = None 
             else:
                 edge_stream_union[key].add(p.applicable_stream_id)
 
@@ -83,13 +61,10 @@ def load_prerequisite_graph() -> nx.DiGraph:
 
         return graph
     finally:
-        session.close()
-
+        if local_session:
+            session.close()
 
 def validate_acyclic(graph: nx.DiGraph):
-    """Returns (True, None) if the graph is a valid DAG, or (False, cycle_description)
-    if a circular prerequisite chain was found -- this should be run once after
-    every load, especially after hand-entered curriculum data changes."""
     if nx.is_directed_acyclic_graph(graph):
         return True, None
     cycle_edges = nx.find_cycle(graph)
@@ -99,17 +74,7 @@ def validate_acyclic(graph: nx.DiGraph):
     ]
     return False, cycle_codes
 
-
 def get_downstream_impact(graph: nx.DiGraph, course_id: int):
-    """
-    Given a course node id, returns every downstream course that becomes
-    unreachable if this course isn't passed, each annotated with WHICH
-    streams the block actually applies to. Replaces the ad hoc BFS that used
-    to live in query_api.py, now built on the loaded graph instead of live
-    per-course database queries -- same correctness guarantees (intersecting
-    the prerequisite edge's stream restriction with the downstream course's
-    own stream scope), but O(1) graph lookups instead of repeated queries.
-    """
     if course_id not in graph:
         return []
 
@@ -161,7 +126,6 @@ def get_downstream_impact(graph: nx.DiGraph, course_id: int):
         })
 
     return results
-
 
 if __name__ == "__main__":
     g = load_prerequisite_graph()

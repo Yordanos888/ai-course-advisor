@@ -7,9 +7,92 @@ from query_api import get_course_details, get_downstream_impact, search_course_b
 from llm_client import generate_response
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import func
-from models import engine, Course, Stream, CourseStream, Department, CommonCourse, Prerequisite
+from models import engine, Course, Stream, CourseStream, Department, CommonCourse, Prerequisite, Student
+from reasoning_assembly import get_ranked_recovery_plans, compare_stream_options
 
 Session = sessionmaker(bind=engine)
+
+
+# ============================================================
+# REASONING_ENGINE (Phase 6) -- formats solve_recovery_plan /
+# compare_stream_options output into backend_context text for the shared
+# synthesis prompt below. The solver computes; this only translates slot
+# offsets into Year/Semester labels and course_ids into codes/names.
+# ============================================================
+def _slot_to_year_sem(current_year_level, current_semester, slot_offset):
+    total = (current_year_level - 1) * 2 + (current_semester - 1) + slot_offset
+    return total // 2 + 1, total % 2 + 1
+
+
+def _format_plan_lines(session, current_year_level, current_semester, plan):
+    lines = []
+    for slot in sorted(plan.keys()):
+        year, sem = _slot_to_year_sem(current_year_level, current_semester, slot)
+        codes = []
+        for cid in plan[slot]:
+            c = session.query(Course).filter_by(id=cid).first()
+            if c:
+                codes.append(f"{c.course_code} ({c.name}, {c.credit_hours} cr)")
+        lines.append(f"Year {year}, Semester {sem}: " + "; ".join(codes))
+    return lines
+
+
+def _format_recovery_result_context(session, student, result):
+    if not result["feasible"]:
+        return f"Reasoning Engine Result: INFEASIBLE.\nReason: {result['reason']}"
+
+    plans = result["plans"]
+    lines = [f"Reasoning Engine Result: {len(plans)} ranked recovery plan(s) found, "
+             f"each completing in {plans[0]['total_semesters_used']} semester(s)."]
+    for i, p in enumerate(plans, 1):
+        lines.append(f"\nOption {i}:")
+        lines.extend(_format_plan_lines(
+            session, student.batch.current_year_level, student.batch.current_semester, p["plan"]))
+    return "\n".join(lines)
+
+
+def _format_stream_comparison_context(session, student, comparisons):
+    lines = ["Reasoning Engine Result: stream comparison (student has not committed to a stream yet)."]
+    for entry in comparisons:
+        r = entry["result"]
+        if r["feasible"]:
+            lines.append(f"\n{entry['stream_name']} stream — feasible, {r['total_semesters_used']} semester(s):")
+            lines.extend(_format_plan_lines(
+                session, student.batch.current_year_level, student.batch.current_semester, r["plan"]))
+        else:
+            lines.append(f"\n{entry['stream_name']} stream — INFEASIBLE: {r['reason']}")
+    return "\n".join(lines)
+
+
+def _resolve_reasoning_context(student_profile):
+    """Returns (backend_context, error_response) -- exactly one is None."""
+    student_id = (student_profile or {}).get("student_id") or (student_profile or {}).get("id")
+    if not student_id:
+        return None, ("⚠️ I need your student ID on file to compute a recovery plan. "
+                       "Please complete your academic profile first.")
+
+    session = Session()
+    try:
+        student = session.get(Student, student_id)
+        if student is None:
+            return None, f"⚠️ No student record found for `{student_id}`."
+
+        try:
+            if student.stream_id is None:
+                comparisons = compare_stream_options(student_id)
+                context = _format_stream_comparison_context(session, student, comparisons)
+            else:
+                result = get_ranked_recovery_plans(student_id, top_n=3)
+                context = _format_recovery_result_context(session, student, result)
+        except ValueError:
+            # Missing batch, unresolvable department, etc. -- a real gap in
+            # the student's record, not something to guess around.
+            return None, ("🛑 Escalation Notice: I couldn't compute a recovery plan from your "
+                           "current academic record. Please consult the ECE Academic Advisor directly.")
+    finally:
+        session.close()
+
+    return context, None
 
 
 # ============================================================
@@ -328,16 +411,14 @@ def process_student_query(user_query: str, route: str, student_profile: dict = N
     Central orchestration layer. Route classification happens ONCE in bot.py
     (via intent_router.classify_route) and is passed in here.
     """
-    if route == "REASONING_ENGINE":
-        return {
-            "response": ("⚙️ The Advanced Search Constraint solver is active. "
-                         "I will be computing optimal multi-year recovery plans for you shortly."),
-            "route": route,
-        }
-
     backend_context = ""
 
-    if route == "SQL_GRAPH":
+    if route == "REASONING_ENGINE":
+        backend_context, error_response = _resolve_reasoning_context(student_profile)
+        if error_response:
+            return {"response": error_response, "route": route}
+
+    elif route == "SQL_GRAPH":
         course_codes = re.findall(r'[A-Za-z]{3,4}g?\s*-?\s*\d{4}', user_query)
         course_codes = [re.sub(r"[\s-]", "", c) for c in course_codes]
 
