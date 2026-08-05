@@ -131,10 +131,12 @@ def assemble_plan_inputs(session, student_id, stream_id_override=None):
     exhausted = _exhausted_course_ids(session, student_id, required, retake_limit)
     flipped = _flipped_parity_course_ids(session, required)
 
-    general_cap = _campus_rule(
-        session, 'general_credit_cap', department_id=department_id, default=_DEFAULT_GENERAL_CREDIT_CAP)
-    year5_cap = _campus_rule(
-        session, 'year5_credit_cap', department_id=department_id, year_level=5, default=_DEFAULT_YEAR5_CREDIT_CAP)
+    general_cap = int(_campus_rule(
+        session, 'general_credit_cap', department_id=department_id, default=_DEFAULT_GENERAL_CREDIT_CAP))
+
+    year5_cap = int(_campus_rule(
+        session, 'year5_credit_cap', department_id=department_id, year_level=5, default=_DEFAULT_YEAR5_CREDIT_CAP))
+
     max_years = int(_campus_rule(
         session, 'max_years_to_graduate', department_id=department_id, default=_DEFAULT_MAX_YEARS))
 
