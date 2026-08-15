@@ -22,13 +22,6 @@ Two entry points:
   - solve_ranked_recovery_plans(...) -> top-N distinct plans, solve-then-
                                          exclude-and-resolve, ranked by
                                          total semesters then credit-load balance
-
-NOT YET INCLUDED (deliberately, to verify core mechanics before layering on
-complexity):
-  - special_requirement ALL_STREAM_COURSES (FYP-II) -- a required-set
-    assembly concern on the caller side, not scheduling logic
-  - stream-choice comparison (Step 4) -- same solver, run once per candidate
-    stream, compared by the caller
 """
 import statistics
 

@@ -38,9 +38,9 @@ ECEg3106,Network Analysis and Synthesis,3,3,2,ECE,Common,"ECEg2102, ECEg3105",TR
 ECEg3108,Digital Signal Processing,4,3,2,ECE,Common,ECEg3105,TRUE
 ECEg3110,Electrical Machines I,4,3,2,ECE,Common,ECEg3107,TRUE
 ECEg3112,Electrical Workshop Practices II,2,3,2,ECE,Common,ECEg3113,TRUE
-ECEg4101,Intoduction to Communication Systems,3,4,1,ECE,Common,"ECEg2110, ECEg3102, ECEg3105",TRUE
+ECEg4101,Introduction to Communication Systems,3,4,1,ECE,Common,"ECEg2110, ECEg3102, ECEg3105",TRUE
 ECEg4103,Computer Architecture and Organization,3,4,1,ECE,Common,ECEg3104,TRUE
-ECEg4105,Intoduction to Control Systems,3,4,1,ECE,Common,"ECEg3101, ECEg3103",TRUE
+ECEg4105,Introduction to Control Systems,3,4,1,ECE,Common,"ECEg3101, ECEg3103",TRUE
 ECEg4107,Electrical Measurement and Instrumentation,3,4,1,"ECE, EME",Common,ECEg2102,TRUE
 ECEg4109,Power Systems I,3,4,1,ECE,Common,ECEg3110,TRUE
 IETP4115,Integrated Engineering team Project,3,4,1,ECE,Common,None,TRUE
