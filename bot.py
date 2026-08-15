@@ -103,10 +103,18 @@ async def downstream_impact_command(update: Update, context: ContextTypes.DEFAUL
 async def semester_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await require_registration(update): return
     if len(context.args) < 2:
-        await update.message.reply_text("Usage: /semester <year> <semester>\nExample: /semester 4 2")
+        await update.message.reply_text(
+            "Usage: /semester <year> <semester> [stream]\n"
+            "Example: /semester 4 2 Computer"
+        )
         return
-    year, semester = context.args[0], context.args[1]
-    response = get_semester_courses_formatted(year, semester)
+        
+    year = context.args[0]
+    semester = context.args[1]
+    # Grab the optional stream argument if provided
+    stream = " ".join(context.args[2:]) if len(context.args) > 2 else None
+    
+    response = get_semester_courses_formatted(year, semester, stream)
     await update.message.reply_text(response)
 
 async def dependant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
