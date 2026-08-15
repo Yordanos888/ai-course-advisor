@@ -96,8 +96,9 @@ async def downstream_impact_command(update: Update, context: ContextTypes.DEFAUL
     if not context.args:
         await update.message.reply_text("Usage: /downstream_impact <course_code>\nExample: /downstream_impact Math1007")
         return
-    course_code = context.args[0]
-    response = get_downstream_impact_formatted(course_code)
+    # FIX: Join all arguments so multi-word names work!
+    query = " ".join(context.args)
+    response = get_downstream_impact_formatted(query)
     await update.message.reply_text(response)
 
 async def semester_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,8 +123,9 @@ async def dependant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /dependant <course_code>\nExample: /dependant ECEg2102")
         return
-    course_code = context.args[0]
-    response = get_dependant_courses_formatted(course_code)
+    # FIX: Join all arguments so multi-word names work!
+    query = " ".join(context.args)
+    response = get_dependant_courses_formatted(query)
     await update.message.reply_text(response)
 
 async def cross_department_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -329,17 +329,29 @@ def get_cross_department_formatted() -> str:
 def get_cross_stream_formatted() -> str:
     session = Session()
     try:
-        shared_entries = session.query(CourseStream).all()
-        course_ids = {e.course_id for e in shared_entries}
-        if not course_ids:
-            return "ℹ️ No multi-stream shared courses found."
+        # Fetch all courses that fall within the stream-specific period (Y4S2 and above)
+        streaming_courses = session.query(Course).filter(
+            (Course.year_level > 4) | 
+            ((Course.year_level == 4) & (Course.semester_offered >= 2))
+        ).all()
+        
+        shared_courses = []
+        for c in streaming_courses:
+            # If stream_id is None, it means it is shared (either by a subset of streams via 
+            # course_streams, or by ALL streams).
+            if c.stream_id is None:
+                shared_courses.append(c)
+                
+        if not shared_courses:
+            return "ℹ️ No multi-stream shared courses found in the streaming period."
 
-        lines = ["🔀 *Courses Shared Between Specific Streams (Y4S2+)*:\n"]
-        for cid in sorted(course_ids):
-            c = session.query(Course).filter_by(id=cid).first()
-            if c:
-                streams = _stream_scope_label(session, c)
-                lines.append(f"• Year {c.year_level}, Sem {c.semester_offered} — *{c.course_code}*: {c.name} `[{streams}]`")
+        # Sort the courses chronologically, then alphabetically
+        shared_courses.sort(key=lambda x: (x.year_level, x.semester_offered, x.course_code))
+
+        lines = ["🔀 *Courses Shared Between Streams (Year 4 Sem 2 & Year 5)*:\n"]
+        for c in shared_courses:
+            streams = _stream_scope_label(session, c)
+            lines.append(f"• Year {c.year_level}, Sem {c.semester_offered} — *{c.course_code}*: {c.name} `[{streams}]`")
 
         return "\n".join(lines)
     finally:
