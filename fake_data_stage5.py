@@ -77,19 +77,26 @@ EXPECTED_FILTERED_A = {"COMMON1", "SA1"}
 EXPECTED_FILTERED_B = {"COMMON1", "SB1"}
 
 # ---------------- Scenario C: stream choice comparison ----------------
+# Year-levels here are REALISTIC (>= 4 for stream-specific courses), not
+# arbitrary -- the model now hard-floors any stream-specific course at
+# Year 4 Sem 2 (stream enrollment can't happen earlier in reality), so a
+# fake scenario using small year-levels for stream courses would be
+# testing something that can no longer legally occur. The chain-length
+# asymmetry this test exists to prove (Stream A finishes faster than
+# Stream B) is preserved, just shifted to realistic timing.
 COURSES_STREAM_CHOICE = {
     "CORE1": {"credit_hours": 3, "semester_offered": 1, "year_level": 1, "stream": None, "prereqs": []},
 
-    "A1": {"credit_hours": 3, "semester_offered": 1, "year_level": 1, "stream": "A", "prereqs": []},
-    "A2": {"credit_hours": 3, "semester_offered": 2, "year_level": 1, "stream": "A", "prereqs": ["A1"]},
+    "A1": {"credit_hours": 3, "semester_offered": 2, "year_level": 4, "stream": "A", "prereqs": []},
+    "A2": {"credit_hours": 3, "semester_offered": 1, "year_level": 5, "stream": "A", "prereqs": ["A1"]},
 
-    "B1": {"credit_hours": 3, "semester_offered": 1, "year_level": 1, "stream": "B", "prereqs": []},
-    "B2": {"credit_hours": 3, "semester_offered": 2, "year_level": 1, "stream": "B", "prereqs": ["B1"]},
-    "B3": {"credit_hours": 3, "semester_offered": 1, "year_level": 2, "stream": "B", "prereqs": ["B2"]},
+    "B1": {"credit_hours": 3, "semester_offered": 2, "year_level": 4, "stream": "B", "prereqs": []},
+    "B2": {"credit_hours": 3, "semester_offered": 1, "year_level": 5, "stream": "B", "prereqs": ["B1"]},
+    "B3": {"credit_hours": 3, "semester_offered": 2, "year_level": 5, "stream": "B", "prereqs": ["B2"]},
 }
-HORIZON_STREAM_CHOICE = 8
+HORIZON_STREAM_CHOICE = 12
 CAPS_STREAM_CHOICE = {
-    (y, s): 9 for y in range(1, 5) for s in (1, 2)
+    (y, s): 9 for y in range(1, 6) for s in (1, 2)
 }
-EXPECTED_GRAD_STREAM_A = 2
-EXPECTED_GRAD_STREAM_B = 3
+EXPECTED_GRAD_STREAM_A = 9   # Year 5, Sem 1
+EXPECTED_GRAD_STREAM_B = 10  # Year 5, Sem 2

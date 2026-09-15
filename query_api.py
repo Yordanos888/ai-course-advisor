@@ -95,9 +95,9 @@ def resolve_course_entity(session, query_str: str):
 def _handle_disambiguation_message(query_str: str, options: list) -> str:
     """Helper to format the disambiguation prompt when search results are fuzzy."""
     if options:
-        lines = ["🤔 *Multiple similar courses found. Please search again using the exact course code:*"]
+        lines = ["🤔 <b>Multiple similar courses found. Please search again using the exact course code:</b>"]
         for opt in options:
-            lines.append(f"• `{opt.course_code}`: {opt.name}")
+            lines.append(f"• <code>{opt.course_code}</code>: {opt.name}")
         return "\n".join(lines)
     return f"❌ Course '{query_str}' not found or not relevant in the catalog."
 
@@ -125,23 +125,32 @@ def get_course_details_formatted(query_str: str) -> str:
             prereq_display.append("• Special Requirement: Every course in the entire curriculum must be PASSED")
 
         dept_name = course.department.name if course.department else "Common / College-wide"
-        stream_label = _stream_scope_label(session, course) if _stream_scope_is_relevant(course) else "Common across all streams"
+
+        # ALWAYS dynamically computed (no hardcoded "pre-streaming years
+        # are always common" shortcut) -- and given a clearly PROMINENT,
+        # unmistakable line when the course is genuinely common to every
+        # stream, rather than being just one plain bullet among several.
+        scope = _resolve_course_stream_scope(session, course)
 
         lines = [
-            f"📘 *{course.course_code}: {course.name}*",
-            f"• *Credit Hours:* {course.credit_hours} cr",
-            f"• *Schedule:* Year {course.year_level}, Semester {course.semester_offered}",
-            f"• *Department Scope:* {dept_name}",
-            f"• *Stream Scope:* {stream_label}",
+            f"📘 <b>{course.course_code}: {course.name}</b>",
+            f"• <b>Credit Hours:</b> {course.credit_hours} cr",
+            f"• <b>Schedule:</b> Year {course.year_level}, Semester {course.semester_offered}",
+            f"• <b>Department Scope:</b> {dept_name}",
         ]
-        
+
+        if scope is None:
+            lines.append("🌐 <b>Common to ALL streams</b> — every student takes this course regardless of stream.")
+        else:
+            lines.append(f"• <b>Stream Scope:</b> {_stream_scope_label(session, course)}")
+
         shared = session.query(CommonCourse).filter_by(course_id=course.id).all()
         if shared:
             notes = [sh.context_note for sh in shared if sh.context_note]
             if notes:
-                lines.append(f"• *Cross-Dept Info:* {' | '.join(notes)}")
+                lines.append(f"• <b>Cross-Dept Info:</b> {' | '.join(notes)}")
 
-        lines.append("• *Prerequisites:*")
+        lines.append("• <b>Prerequisites:</b>")
         if prereq_display:
             lines.extend(prereq_display)
         else:
@@ -210,12 +219,12 @@ def get_downstream_impact_formatted(query_str: str) -> str:
             impacted.append((course.year_level, course.semester_offered, course.course_code, course.name, applies_to))
 
         if not impacted:
-            return f"✅ *{target.course_code}: {target.name}* is a terminal course. Failing or dropping it does not block any direct downstream courses."
+            return f"✅ <b>{target.course_code}: {target.name}</b> is a terminal course. Failing or dropping it does not block any direct downstream courses."
 
         impacted.sort(key=lambda x: (x[0], x[1], x[2]))
-        lines = [f"⚠️ *Downstream Impact of Failing/Dropping {target.course_code}: {target.name}*\n"]
+        lines = [f"⚠️ <b>Downstream Impact of Failing/Dropping {target.course_code}: {target.name}</b>\n"]
         for y, s, code, name, stream in impacted:
-            lines.append(f"• Year {y}, Sem {s} — *{code}*: {name} `[{stream}]`")
+            lines.append(f"• Year {y}, Sem {s} — <b>{code}</b>: {name} <code>[{stream}]</code>")
 
         return "\n".join(lines)
     finally:
@@ -228,7 +237,7 @@ def get_semester_courses_formatted(year_str: str, sem_str: str, stream_str: str 
             year = int(year_str)
             sem = int(sem_str)
         except ValueError:
-            return "❌ Please provide valid numbers for year and semester (e.g., `/semester 4 2`)."
+            return "❌ Please provide valid numbers for year and semester (e.g., <code>/semester 4 2</code>)."
 
         courses = session.query(Course).filter_by(year_level=year, semester_offered=sem).order_by(Course.course_code).all()
         if not courses:
@@ -240,8 +249,8 @@ def get_semester_courses_formatted(year_str: str, sem_str: str, stream_str: str 
         if is_streaming_period:
             if not stream_str:
                 return (f"ℹ️ Year {year} Semester {sem} is stream-specific. Please specify your stream.\n"
-                        f"Usage: `/semester {year} {sem} <stream_name>`\n"
-                        f"Example: `/semester {year} {sem} Computer`")
+                        f"Usage: <code>/semester {year} {sem} &lt;stream_name&gt;</code>\n"
+                        f"Example: <code>/semester {year} {sem} Computer</code>")
             
             s_obj = session.query(Stream).filter(Stream.name.ilike(f"%{stream_str}%")).first()
             if not s_obj:
@@ -254,25 +263,35 @@ def get_semester_courses_formatted(year_str: str, sem_str: str, stream_str: str 
                     stream_courses.append(c)
                     
             courses = stream_courses  # Override with filtered list
-            title = f"📅 *Curriculum for Year {year}, Semester {sem} ({s_obj.name})*"
+            title = f"📅 <b>Curriculum for Year {year}, Semester {sem} ({s_obj.name})</b>"
         else:
-            title = f"📅 *Curriculum for Year {year}, Semester {sem}*"
+            title = f"📅 <b>Curriculum for Year {year}, Semester {sem}</b>"
 
         total_credits = sum(c.credit_hours for c in courses)
         lines = [title, f"Total Courses: {len(courses)} | Total Credit Pool: {total_credits} cr\n"]
 
         for c in courses:
-            note_str = ""
+            notes = []
+
             shared = session.query(CommonCourse).filter_by(course_id=c.id).all()
             if shared:
-                # Use context_note for cross-department definitions
-                notes = [sh.context_note for sh in shared if sh.context_note]
-                if notes:
-                    note_str = f" `[Note: {' | '.join(notes)}]`"
+                cross_dept_notes = [sh.context_note for sh in shared if sh.context_note]
+                if cross_dept_notes:
+                    notes.append(f"Note: {' | '.join(cross_dept_notes)}")
             elif c.department_id is None:
-                note_str = " `[Common College-wide]`"
+                notes.append("Common College-wide")
 
-            lines.append(f"• *{c.course_code}*: {c.name} ({c.credit_hours} cr){note_str}")
+            # Acknowledge courses shared across a SUBSET of streams (not
+            # all, not zero) the same way cross-department sharing is
+            # acknowledged above -- a course can be BOTH cross-department
+            # and cross-stream, so this appends rather than overrides.
+            if c.stream_id is None:
+                scope = _resolve_course_stream_scope(session, c)
+                if scope is not None:
+                    notes.append(f"Shared streams: {_stream_scope_label(session, c)}")
+
+            note_str = f" <code>[{' ; '.join(notes)}]</code>" if notes else ""
+            lines.append(f"• <b>{c.course_code}</b>: {c.name} ({c.credit_hours} cr){note_str}")
 
         return "\n".join(lines).strip()
     finally:
@@ -287,9 +306,9 @@ def get_dependant_courses_formatted(query_str: str) -> str:
 
         dependents = session.query(Prerequisite).filter_by(prerequisite_course_id=course.id).all()
         if not dependents:
-            return f"ℹ️ No direct courses list *{course.course_code}: {course.name}* as a prerequisite."
+            return f"ℹ️ No direct courses list <b>{course.course_code}: {course.name}</b> as a prerequisite."
 
-        lines = [f"🔗 *Courses directly requiring {course.course_code}: {course.name}*:\n"]
+        lines = [f"🔗 <b>Courses directly requiring {course.course_code}: {course.name}</b>:\n"]
         for d in dependents:
             dep_c = session.query(Course).filter_by(id=d.course_id).first()
             if dep_c:
@@ -297,8 +316,8 @@ def get_dependant_courses_formatted(query_str: str) -> str:
                 if d.applicable_stream_id:
                     s = session.query(Stream).filter_by(id=d.applicable_stream_id).first()
                     if s:
-                        stream_note = f" `[{s.name.replace(' Engineering', '')} only]`"
-                lines.append(f"• Year {dep_c.year_level}, Sem {dep_c.semester_offered} — *{dep_c.course_code}*: {dep_c.name}{stream_note}")
+                        stream_note = f" <code>[{s.name.replace(' Engineering', '')} only]</code>"
+                lines.append(f"• Year {dep_c.year_level}, Sem {dep_c.semester_offered} — <b>{dep_c.course_code}</b>: {dep_c.name}{stream_note}")
 
         return "\n".join(lines)
     finally:
@@ -311,7 +330,7 @@ def get_cross_department_formatted() -> str:
         if not common_links:
             return "ℹ️ No cross-department courses configured."
 
-        lines = ["🏢 *Cross-Department Shared Courses*:\n"]
+        lines = ["🏢 <b>Cross-Department Shared Courses</b>:\n"]
         seen = set()
         for link in common_links:
             c = session.query(Course).filter_by(id=link.course_id).first()
@@ -320,7 +339,7 @@ def get_cross_department_formatted() -> str:
                 if key not in seen:
                     seen.add(key)
                     note = f" — Note: {link.context_note}" if link.context_note else ""
-                    lines.append(f"• *{c.course_code}*: {c.name}{note}")
+                    lines.append(f"• <b>{c.course_code}</b>: {c.name}{note}")
 
         return "\n".join(lines)
     finally:
@@ -348,10 +367,10 @@ def get_cross_stream_formatted() -> str:
         # Sort the courses chronologically, then alphabetically
         shared_courses.sort(key=lambda x: (x.year_level, x.semester_offered, x.course_code))
 
-        lines = ["🔀 *Courses Shared Between Streams (Year 4 Sem 2 & Year 5)*:\n"]
+        lines = ["🔀 <b>Courses Shared Between Streams (Year 4 Sem 2 & Year 5)</b>:\n"]
         for c in shared_courses:
             streams = _stream_scope_label(session, c)
-            lines.append(f"• Year {c.year_level}, Sem {c.semester_offered} — *{c.course_code}*: {c.name} `[{streams}]`")
+            lines.append(f"• Year {c.year_level}, Sem {c.semester_offered} — <b>{c.course_code}</b>: {c.name} <code>[{streams}]</code>")
 
         return "\n".join(lines)
     finally:

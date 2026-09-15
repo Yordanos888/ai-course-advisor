@@ -27,7 +27,7 @@ elsewhere in the codebase (student_service.py: `stream.name.split()[0]`)
 name ("Computer Engineering").
 """
 
-from models import Course, Prerequisite, CourseStream, CommonCourse, Stream
+from models import Course, Prerequisite, CourseStream, CommonCourse, Stream, Department
 
 
 def _short_stream_name(full_name):
@@ -37,6 +37,7 @@ def _short_stream_name(full_name):
 def load_raw_courses_from_db(session):
     courses = {}
     stream_short_by_id = {s.id: _short_stream_name(s.name) for s in session.query(Stream).all()}
+    dept_code_by_id = {d.id: d.code for d in session.query(Department).all()}
 
     all_courses = session.query(Course).all()
     id_to_code = {c.id: c.course_code for c in all_courses}
@@ -45,7 +46,13 @@ def load_raw_courses_from_db(session):
     for cs in session.query(CourseStream).all():
         coursestream_by_course.setdefault(cs.course_id, set()).add(stream_short_by_id[cs.stream_id])
 
-    has_common_course_entry = {cc.course_id for cc in session.query(CommonCourse).all()}
+    # Map course_id -> partner department CODE (e.g. "EME", "SE"), for
+    # display purposes ("Software Engineering (3 cr) [with SE department]")
+    # -- not just whether a CommonCourse entry exists, but WHICH department.
+    partner_dept_by_course = {
+        cc.course_id: dept_code_by_id.get(cc.shared_with_department_id)
+        for cc in session.query(CommonCourse).all()
+    }
 
     prereq_edges_by_course = {}
     for p in session.query(Prerequisite).all():
@@ -64,8 +71,10 @@ def load_raw_courses_from_db(session):
             streams = None  # common to all streams
 
         alt_parity = None
-        if c.id in has_common_course_entry and c.semester_offered in (1, 2):
+        alt_parity_department = None
+        if c.id in partner_dept_by_course and c.semester_offered in (1, 2):
             alt_parity = 2 if c.semester_offered == 1 else 1
+            alt_parity_department = partner_dept_by_course[c.id]
 
         courses[c.course_code] = {
             "name": c.name,
@@ -73,6 +82,7 @@ def load_raw_courses_from_db(session):
             "year_level": c.year_level,
             "semester_offered": c.semester_offered,
             "alt_parity": alt_parity,
+            "alt_parity_department": alt_parity_department,
             "streams": streams,
             "is_droppable": c.is_droppable,
             "special_requirement": c.special_requirement,

@@ -67,12 +67,12 @@ def _persist_student_profile(session, student, year, sem, stream_name):
         student.stream_id = None
 
 
-def _resolve_failed_courses(session, failed_course_texts):
+def _resolve_course_texts(session, course_texts):
     """Free-text -> real course codes via the existing fuzzy resolver.
     Returns (resolved_codes, unresolved_texts)."""
     resolved_codes = []
     unresolved = []
-    for text in failed_course_texts:
+    for text in (course_texts or []):
         text = text.strip()
         if not text:
             continue
@@ -84,27 +84,46 @@ def _resolve_failed_courses(session, failed_course_texts):
     return resolved_codes, unresolved
 
 
-def _persist_course_history(session, student, year, sem, failed_codes):
+# Backwards-compatible alias -- the old name only ever handled failures.
+_resolve_failed_courses = _resolve_course_texts
+
+
+def _persist_course_history(session, student, year, sem, failed_codes,
+                             added_codes=None, dropped_codes=None):
     """Audit-trail write, matching the old system's behavior. Nothing
     currently reads these rows back for planning purposes (see module
-    docstring), but this keeps the schema populated consistently."""
+    docstring), but this keeps the schema populated consistently.
+
+    Note StudentCourseStatus has a partial-unique index allowing only ONE
+    DROPPED row per (student, course), which the reported-drop list
+    respects naturally (a course is listed at most once)."""
+    added_codes = added_codes or []
+    dropped_codes = dropped_codes or []
+
     session.query(StudentCourseStatus).filter_by(student_id=student.id).delete()
 
-    failed_set = set(failed_codes)
+    explicit = {}
     for code in failed_codes:
+        explicit[code] = "FAILED"
+    for code in dropped_codes:
+        explicit.setdefault(code, "DROPPED")
+    for code in added_codes:
+        explicit.setdefault(code, "PASSED")
+
+    for code, status in explicit.items():
         course = session.query(Course).filter_by(course_code=code).first()
         if course:
             session.add(StudentCourseStatus(
                 student_id=student.id, course_id=course.id, attempt_number=1,
                 academic_year_taken=course.year_level, semester_taken=course.semester_offered,
-                status="FAILED",
+                status=status,
             ))
 
     past_courses = session.query(Course).filter(
         (Course.year_level < year) | ((Course.year_level == year) & (Course.semester_offered < sem))
     ).all()
     for c in past_courses:
-        if c.course_code in failed_set:
+        if c.course_code in explicit:
             continue
         scope = _resolve_course_stream_scope(session, c)
         is_applicable = scope is None or (student.stream_id in scope if student.stream_id else False)
@@ -116,37 +135,52 @@ def _persist_course_history(session, student, year, sem, failed_codes):
             ))
 
 
-def _format_header(year, sem, stream_name, resolved_codes, unresolved):
-    header = f"✅ *Profile Updated:* Year {year}, Sem {sem}\n"
+def _format_header(year, sem, stream_name, failed_codes, added_codes, dropped_codes, unresolved):
+    header = f"✅ <b>Profile Updated:</b> Year {year}, Sem {sem}\n"
     if stream_name:
         header += f"Stream: {stream_name}\n"
-    if resolved_codes:
-        header += f"Failed: {', '.join(resolved_codes)}\n"
+    if failed_codes:
+        header += f"Failed: {', '.join(failed_codes)}\n"
     else:
         header += "Failed: None (all past courses assumed passed)\n"
+    if added_codes:
+        header += f"Added ahead of schedule: {', '.join(added_codes)}\n"
+    if dropped_codes:
+        header += f"Dropped: {', '.join(dropped_codes)}\n"
     if unresolved:
         header += f"⚠️ Unrecognized (skipped): {', '.join(unresolved)}\n"
     return header
 
 
-def process_reasoning_request(student, year: int, sem: int, stream_name: str, failed_courses: list) -> str:
+def process_reasoning_request(student, year: int, sem: int, stream_name: str,
+                                failed_courses: list, added_courses: list = None,
+                                dropped_courses: list = None) -> str:
+    """added_courses / dropped_courses default to None so any existing
+    caller passing only the original five arguments keeps working."""
     session = Session()
     student = session.merge(student)
     try:
-        resolved_codes, unresolved = _resolve_failed_courses(session, failed_courses)
+        failed_codes, unresolved_f = _resolve_course_texts(session, failed_courses)
+        added_codes, unresolved_a = _resolve_course_texts(session, added_courses)
+        dropped_codes, unresolved_d = _resolve_course_texts(session, dropped_courses)
+        unresolved = unresolved_f + unresolved_a + unresolved_d
 
         _persist_student_profile(session, student, year, sem, stream_name)
-        _persist_course_history(session, student, year, sem, resolved_codes)
+        _persist_course_history(session, student, year, sem, failed_codes,
+                                 added_codes, dropped_codes)
         session.commit()
 
         if stream_name:
-            result = solve_schedule_for_student(session, year, sem, stream_name, resolved_codes)
+            result = solve_schedule_for_student(
+                session, year, sem, stream_name, failed_codes, added_codes, dropped_codes)
             body = format_schedule_result(result)
         else:
-            comparisons = compare_all_streams(session, year, sem, resolved_codes)
+            comparisons = compare_all_streams(
+                session, year, sem, failed_codes, added_codes, dropped_codes)
             body = format_stream_comparison(comparisons)
 
-        header = _format_header(year, sem, stream_name, resolved_codes, unresolved)
+        header = _format_header(year, sem, stream_name, failed_codes,
+                                 added_codes, dropped_codes, unresolved)
         return header + "\n" + body
     finally:
         session.close()
