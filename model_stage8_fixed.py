@@ -330,29 +330,55 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
     non_droppable_dev_sum = sum(absdev[c] for c in non_droppable_decided) if non_droppable_decided else 0
     max_non_droppable_dev = horizon_slots * max(len(non_droppable_decided), 1)
 
-    # CROWD-RELIEF SPECIAL CASE: narrowly scoped to the one category
-    # that genuinely has freedom to move -- a course that is (a) common
-    # to all streams, (b) droppable, AND (c) naturally positioned in the
-    # stream period (Year 4 Sem 2 onward). Condition (c) matters: nearly
-    # every early general-education course is also common+droppable, and
-    # without it the peak-load tier below starts reshuffling the whole
-    # first three years instead of just relieving the crowded late
-    # terms. A course meeting all three is uniquely unconstrained -- it
-    # sits among the crowded stream-period terms yet is bound by neither
-    # the stream-enrollment floor nor the non-droppable pinning, so it's
-    # the only thing that can legitimately be pulled back into a lighter
-    # earlier term.
+    # CROWD-RELIEF: exempt from the general natural-slot deviation
+    # penalty, letting the crowding tier (below) place these courses in
+    # the lightest available same-parity slot instead. TWO independent
+    # categories qualify:
+    #
+    #   (a) common to all streams, droppable, and naturally positioned
+    #       in the stream period (Year 4 Sem 2+) -- the original special
+    #       case: nearly every early general-education course is also
+    #       common+droppable, so restricting to the stream period keeps
+    #       this from reshuffling the whole first three years; without
+    #       it, only the genuinely crowded late terms get relieved.
+    #
+    #   (b) ANY droppable course currently being RETAKEN (a FAILED or
+    #       DROPPED record in its history) -- a retake has already
+    #       broken from its natural position by definition, so insisting
+    #       it fight for space near that original position is a much
+    #       weaker signal than for a course never yet attempted. Unlike
+    #       (a), this isn't restricted to common courses or the stream
+    #       period -- a stream-specific retake still respects the
+    #       Year-4-Sem-2 floor (a hard constraint set above), it's just
+    #       free to move within its legal window instead of hugging its
+    #       natural slot.
+    #
+    # No separate "must have no dependents" guard is needed: the
+    # existing tier ordering already protects against harmful cascading
+    # -- if relieving a retake's crowding would push some dependent's
+    # OWN deviation up, that cost is weighed in general_dev_sum, a
+    # HIGHER-priority tier than crowding, so the solver won't make that
+    # trade unless it's genuinely still the best option.
     #
     # Everything else keeps its natural-slot deviation penalty at a
     # HIGHER priority tier, so "stay at your natural position" is fully
     # preserved for the rest of the curriculum.
     stream_period_floor = stream_enrollment_floor_slot(semester_types)
-    relief_eligible = [
+    retaken_decided = {
         c for c in decided_codes
-        if _course_stream_scope(courses[c]) is None
-        and courses[c].get("is_droppable", courses[c].get("droppable", True))
-        and natural_slots[c] >= stream_period_floor
-    ]
+        if any(r.get("status") in ("FAILED", "DROPPED") for r in completed_courses.get(c, []))
+    }
+    relief_eligible = []
+    for c in decided_codes:
+        is_droppable = courses[c].get("is_droppable", courses[c].get("droppable", True))
+        if not is_droppable:
+            continue
+        common_in_stream_period = (
+            _course_stream_scope(courses[c]) is None
+            and natural_slots[c] >= stream_period_floor
+        )
+        if common_in_stream_period or c in retaken_decided:
+            relief_eligible.append(c)
     relief_set = set(relief_eligible)
 
     general_dev_sum = sum(dev for c, dev in absdev.items() if c not in relief_set) if absdev else 0
