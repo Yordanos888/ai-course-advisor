@@ -65,6 +65,80 @@ FOUR MORE FIXES FROM REAL-WORLD TESTING FEEDBACK:
      so otherwise-equal plans prefer NOT using the flip, rather than the
      solver reaching for it with no real benefit.
 
+TWO MORE FIXES FROM A LATER ROUND OF REAL-WORLD TESTING (retake behavior):
+
+  7. RETAKE COURSES GET THEIR OWN, LOWER-PRIORITY DEVIATION TIER,
+     strictly below the general on-track deviation tier (was previously
+     folded in uniformly). "Stay close to your natural slot" is still a
+     real, optimized preference for a retake -- it's just never allowed
+     to outrank keeping an on-track (never-attempted) course at ITS
+     natural slot. Without this split, a retake competing for room in
+     some future occurrence of its parity-slot could bump an unrelated
+     healthy course out of its own natural slot just to shave the
+     retake's own deviation -- observed concretely on real data: a
+     single failed Freshman course pulled toward its earliest legal
+     retake slot displaced an unrelated Year-2 course, which then landed
+     on FYP-II's own natural slot and triggered fix #8's bug below,
+     costing the whole plan an entire extra graduation year over one
+     failure. Splitting the tiers means the solver now prefers to push
+     the retake itself further out rather than disturb anyone else.
+
+  8. ALL_STREAM_COURSES SCOPE NARROWED TO GENUINE MAJOR COURSES (was a
+     real bug, found via #7's investigation above): the peer loop used
+     to run against EVERY course in the filtered curriculum, including
+     university-wide courses taken BEFORE department enrollment (e.g. a
+     Freshman English course). "All Stream Major Courses" (the actual
+     campus-rule wording, confirmed against the source CSV) means the
+     student's major coursework specifically. Left unscoped, any such
+     course landing on FYP-II's own natural slot for any reason (a
+     retake, a cross-department flip, anything) forces FYP-II strictly
+     past it -- and since there are multiple semester-types per year,
+     "strictly past" skips a full year rather than one term.
+
+     Loaders now tag each course "is_major", and the peer loop skips
+     non-major courses entirely. Loaders/fake data with no such concept
+     default every course to major (True), so existing tests that never
+     needed this distinction are unaffected. The real-data loaders
+     derive "is_major" from ENROLLMENT TIMING, not course subject or
+     the CSV's "Department Scope" column: per the campus doc, Year 1
+     (both semesters) is the whole university's shared "Freshman year",
+     and Year 2 Semester 1 is the shared "pre-Engineering" term before a
+     department is even chosen -- nothing there is ECE major work yet,
+     regardless of subject. "Department Scope" was tried first and
+     rejected: it tracks who *administers* a course (e.g. Industry
+     Internship is tagged "Common" because it's coordinated centrally by
+     the university, despite being a core ECE requirement), not whether
+     it belongs to the major -- it would have wrongly exempted Internship
+     from this requirement while still gating on gen-ed courses.
+
+  9. ALL_STREAM_COURSES '>=' CRITERION -- A "SAME HOME PARITY" RELAXATION
+     WAS TRIED AND REVERTED (a genuine false start, kept here so it
+     isn't tried again). The idea: exempt any peer sharing this course's
+     own home parity (semester_offered) from the strict '>' rule, not
+     just a peer matching its exact natural (year, sem) slot -- on the
+     theory that a peer reaching this course's slot via its OWN ordinary
+     parity (a retake, a prerequisite chain, a cap crunch) is different
+     from one reaching it by exploiting a cross-department alt_parity
+     flip (the actual exploit fix #4 was built to close), so only the
+     latter should still need strict '>'.
+
+     This conflated two different things: "won't collide via a parity
+     exploit" is not the same claim as "safe to treat as already done."
+     The requirement is genuine COMPLETION -- every major course actually
+     finished and graded before this course starts -- not merely not
+     landing on the same slot. Caught on a real case: Modern Control
+     Systems (home parity 2, same as FYP-II) got delayed by a real
+     prerequisite chain (a Comp2003 retake, no exploit anywhere in it)
+     onto FYP-II's own natural slot. Under the parity-based relaxation,
+     FYP-II was allowed to run concurrently with it -- but Modern
+     Control Systems is still in progress at that point, so FYP-II
+     genuinely hasn't cleared its "all major courses done" gate yet. The
+     correct behavior is for FYP-II to wait a full extra year, exactly
+     what the original natural-slot-equality rule already produced. That
+     the next same-parity slot is a full year away rather than one term
+     is a real, unavoidable consequence of the semester-type structure --
+     not a parity-skip artifact to route around.
+
 BACKWARD-COMPATIBILITY DESIGN: semester_types is now a PARAMETER, not a
 hardcoded (1,2,3) constant. This lets Stage 1-7's existing fake data (all
 built around a 2-semester-type system) be re-run through THIS model with
@@ -99,6 +173,23 @@ def stream_enrollment_floor_slot(semester_types=(1, 2, 3)):
     stream-specific course can legally be scheduled, since that's when
     stream enrollment actually happens administratively."""
     return natural_slot_for_course({"year_level": 4, "semester_offered": 2}, semester_types)
+
+
+def _is_major_course(course_info):
+    """Whether a course counts as a 'stream major course' for the
+    ALL_STREAM_COURSES requirement (FYP-II-style) -- i.e. genuinely part
+    of the department's own curriculum, whether stream-specific or
+    common to all streams within the department, as opposed to a
+    generic university-wide/gen-ed course (e.g. a Freshman humanities or
+    language course) that just happens to still be outstanding.
+
+    Loaders that carry this distinction (db_loader.py, the Stage 8a/8b
+    CSV loaders) set "is_major" explicitly. Older/fake data with no such
+    concept defaults to True, so every course is still treated as a
+    peer -- unchanged behavior for curricula that never needed this
+    distinction in the first place.
+    """
+    return course_info.get("is_major", True)
 
 
 def _course_stream_scope(course_info):
@@ -171,7 +262,7 @@ def earliest_slot_at_or_after(min_slot, allowed_parities, horizon_slots, semeste
 
 def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
                             max_attempts, semester_types, normal_caps_override, verbose,
-                            allow_overload, hard_grad_slot_cap=None):
+                            allow_overload, hard_grad_slot_cap=None, fyp2_waived_courses=None):
     """
     The actual model-building/solving logic, parameterized by:
 
@@ -188,8 +279,15 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
         question comes back infeasible, the overload doesn't actually
         rescue on-time completion and must not be used at all (see the
         two-phase orchestration in build_and_solve() below).
+
+    fyp2_waived_courses: a set of course codes to exclude entirely from
+        the ALL_STREAM_COURSES peer requirement for THIS solve, on top
+        of the permanent is_major exclusion. See build_and_solve()'s
+        FYP2_PREREQ_WAIVER escalation for what this represents and why
+        it's applied only as a last resort, never by default.
     """
     completed_courses = completed_courses or {}
+    fyp2_waived_courses = fyp2_waived_courses or set()
 
     violations = validate_retake_limits(courses, completed_courses, max_attempts)
     if violations:
@@ -225,14 +323,49 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
                 model.Add(slot_of[c] > slot_of[p])
 
     # --- ALL_STREAM_COURSES dynamic requirement (FYP-II-style) -- strict
-    # '>' against every peer EXCEPT one whose own natural slot genuinely
-    # coincides with this course's natural slot (a real, by-design
-    # concurrent final-term course). ---
+    # '>' against every MAJOR peer EXCEPT one whose own natural slot
+    # genuinely coincides with this course's natural slot (a real,
+    # by-design concurrent final-term course). Generic gen-ed/common
+    # pre-department courses are skipped entirely -- "All Stream Major
+    # Courses" means the student's major coursework, not literally every
+    # course still outstanding.
+    #
+    # A same-HOME-PARITY relaxation (>= for any peer sharing this
+    # course's own semester_offered, not just its exact natural slot)
+    # was tried and REVERTED: it conflated "won't collide via a parity
+    # exploit" with "safe to run concurrently," but those aren't the
+    # same thing. The requirement is genuine COMPLETION -- every major
+    # course actually finished and graded -- not merely not colliding on
+    # a slot. Confirmed wrong via a real case: Modern Control Systems
+    # (home parity 2, same as FYP-II) got delayed by a real prerequisite
+    # chain (a Comp2003 retake, no exploit) onto FYP-II's own natural
+    # slot. Under the parity-based relaxation, FYP-II was allowed to run
+    # concurrently with it -- but Modern Control Systems is still
+    # in-progress at that point, so FYP-II genuinely can't have started
+    # yet; the correct behavior IS for FYP-II to wait a full extra year,
+    # exactly as the strict natural-slot rule already produced before
+    # this reversion. That the next same-parity slot is a full year away
+    # (not one term) is a real, unavoidable consequence of the
+    # semester-type structure, not a bug to route around.
+    #
+    # fyp2_waived_courses (NEW): a handful of specific courses that the
+    # department will, in practice, informally NOT insist on as a
+    # completed prerequisite for FYP-II -- but only when the student
+    # would otherwise miss the 5-year timeline, and never by default.
+    # This is a per-solve-attempt override supplied by the caller (see
+    # build_and_solve()'s escalation), not a standing property of any
+    # course -- so it's applied here as a plain skip, same mechanism as
+    # the is_major skip, just conditional on this specific solve attempt
+    # rather than permanent. ---
     for c in main_codes:
         if courses[c].get("special_requirement") == "ALL_STREAM_COURSES":
             c_natural = natural_slot_for_course(courses[c], semester_types)
             for c2 in main_codes:
                 if c2 == c:
+                    continue
+                if not _is_major_course(courses[c2]):
+                    continue
+                if c2 in fyp2_waived_courses:
                     continue
                 c2_natural = natural_slot_for_course(courses[c2], semester_types)
                 if c2_natural == c_natural:
@@ -330,97 +463,28 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
     non_droppable_dev_sum = sum(absdev[c] for c in non_droppable_decided) if non_droppable_decided else 0
     max_non_droppable_dev = horizon_slots * max(len(non_droppable_decided), 1)
 
-    # CROWD-RELIEF: exempt from the general natural-slot deviation
-    # penalty, letting the crowding tier (below) place these courses in
-    # the lightest available same-parity slot instead. TWO independent
-    # categories qualify:
-    #
-    #   (a) common to all streams, droppable, and naturally positioned
-    #       in the stream period (Year 4 Sem 2+) -- the original special
-    #       case: nearly every early general-education course is also
-    #       common+droppable, so restricting to the stream period keeps
-    #       this from reshuffling the whole first three years; without
-    #       it, only the genuinely crowded late terms get relieved.
-    #
-    #   (b) ANY droppable course currently being RETAKEN (a FAILED or
-    #       DROPPED record in its history) -- a retake has already
-    #       broken from its natural position by definition, so insisting
-    #       it fight for space near that original position is a much
-    #       weaker signal than for a course never yet attempted. Unlike
-    #       (a), this isn't restricted to common courses or the stream
-    #       period -- a stream-specific retake still respects the
-    #       Year-4-Sem-2 floor (a hard constraint set above), it's just
-    #       free to move within its legal window instead of hugging its
-    #       natural slot.
-    #
-    # No separate "must have no dependents" guard is needed: the
-    # existing tier ordering already protects against harmful cascading
-    # -- if relieving a retake's crowding would push some dependent's
-    # OWN deviation up, that cost is weighed in general_dev_sum, a
-    # HIGHER-priority tier than crowding, so the solver won't make that
-    # trade unless it's genuinely still the best option.
-    #
-    # Everything else keeps its natural-slot deviation penalty at a
-    # HIGHER priority tier, so "stay at your natural position" is fully
-    # preserved for the rest of the curriculum.
-    stream_period_floor = stream_enrollment_floor_slot(semester_types)
+    # RETAKE-DEVIATION TIER: a course currently being retaken (has a
+    # FAILED or DROPPED record in its history) gets its OWN deviation
+    # tier, ranked BELOW general deviation rather than folded in
+    # uniformly. "Stay close to your natural slot" remains a real,
+    # optimized preference for retakes -- it's just never allowed to
+    # outrank keeping an on-track (never-attempted) course at its own
+    # natural slot. Without this split, a retake competing for room in
+    # some future occurrence of its parity-slot can bump an unrelated
+    # healthy course out of ITS natural slot just to shave the retake's
+    # own deviation -- a bad trade this tier ordering now forbids: any
+    # displacement of an on-track course costs tier 4 (general_dev),
+    # strictly above tier 5 (retake_dev), so the solver will always
+    # prefer to push the retake itself further out instead.
     retaken_decided = {
         c for c in decided_codes
         if any(r.get("status") in ("FAILED", "DROPPED") for r in completed_courses.get(c, []))
     }
-    relief_eligible = []
-    for c in decided_codes:
-        is_droppable = courses[c].get("is_droppable", courses[c].get("droppable", True))
-        if not is_droppable:
-            continue
-        common_in_stream_period = (
-            _course_stream_scope(courses[c]) is None
-            and natural_slots[c] >= stream_period_floor
-        )
-        if common_in_stream_period or c in retaken_decided:
-            relief_eligible.append(c)
-    relief_set = set(relief_eligible)
-
-    general_dev_sum = sum(dev for c, dev in absdev.items() if c not in relief_set) if absdev else 0
+    general_dev_sum = sum(dev for c, dev in absdev.items() if c not in retaken_decided) if absdev else 0
     max_general_dev = horizon_slots * max(len(decided_codes), 1)
 
-    # Per-slot credit load across future slots.
-    slot_load_expr = {}
-    for s in range(now_slot + 1, horizon_slots + 1):
-        contributors = [c for c in decided_codes if s in valid_slots[c]]
-        if contributors:
-            slot_load_expr[s] = sum(
-                courses[c]["credit_hours"] * assign[c, s] for c in contributors
-            )
-
-    # CROWDING TERM: for each relief-eligible course, the credit load of
-    # whichever slot it actually lands in. Minimizing the sum of these is
-    # what performs the crowd relief -- it directly expresses "put this
-    # course in the least crowded same-parity term available."
-    #
-    # Peak load alone was tried first and doesn't work: the peak is
-    # usually set by some unrelated crowded term the relief course can't
-    # affect, so every candidate placement scores identically and the
-    # alphabetical tie-break picks arbitrarily (in practice, dumping the
-    # course into the earliest legal slot regardless of how full it was).
-    #
-    # Linearized with big-M rather than the natural quadratic form
-    # (assign[c,s] * load[s]), keeping the model linear:
-    #   load_at[c] >= load[s] - M*(1 - assign[c,s])
-    #   load_at[c] <= load[s] + M*(1 - assign[c,s])
-    # so load_at[c] is forced to equal load[s] exactly for the chosen s,
-    # and left unconstrained by the others.
-    BIG_M = 1000
-    crowding_terms = []
-    for c in relief_eligible:
-        load_at = model.NewIntVar(0, BIG_M, f"load_at_{c}")
-        for s in valid_slots[c]:
-            if s in slot_load_expr:
-                model.Add(load_at >= slot_load_expr[s] - BIG_M * (1 - assign[c, s]))
-                model.Add(load_at <= slot_load_expr[s] + BIG_M * (1 - assign[c, s]))
-        crowding_terms.append(load_at)
-    crowding_sum = sum(crowding_terms) if crowding_terms else 0
-    max_crowding = BIG_M * max(len(crowding_terms), 1)
+    retake_dev_sum = sum(absdev[c] for c in retaken_decided) if retaken_decided else 0
+    max_retake_dev = horizon_slots * max(len(retaken_decided), 1)
 
     # Once overload is being used at all (Phase 2, hard_grad_slot_cap
     # set), minimize HOW MANY Year-5 slots need it -- use it as sparingly
@@ -435,10 +499,10 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
     max_possible_tie_break = max_index * horizon_slots * max(len(main_codes), 1)
 
     # Lexicographic weighting, outer tier dominates every inner one:
-    # grad_slot > (flip+overload) > non_droppable_dev > general_dev > crowding > tie_break
+    # grad_slot > (flip+overload) > non_droppable_dev > general_dev > retake_dev > tie_break
     w_tie = 1
-    w_crowding = (max_possible_tie_break + 1) * w_tie
-    w_general_dev = (max_crowding + 1) * w_crowding
+    w_retake_dev = (max_possible_tie_break + 1) * w_tie
+    w_general_dev = (max_retake_dev + 1) * w_retake_dev
     w_non_droppable_dev = (max_general_dev + 1) * w_general_dev
     w_privilege = (max_non_droppable_dev + 1) * w_non_droppable_dev
     w_grad = (max_flip_count + max_overload_term + 1) * w_privilege
@@ -448,7 +512,7 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
         + (flip_count + overload_term) * w_privilege
         + non_droppable_dev_sum * w_non_droppable_dev
         + general_dev_sum * w_general_dev
-        + crowding_sum * w_crowding
+        + retake_dev_sum * w_retake_dev
         + tie_break_term * w_tie
     )
 
@@ -488,7 +552,7 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
 
 def build_and_solve(courses, horizon_slots, policy_horizon_slots=None, completed_courses=None, now_slot=0,
                      max_attempts=MAX_ATTEMPTS_DEFAULT, semester_types=(1, 2, 3),
-                     normal_caps_override=None, verbose=False):
+                     normal_caps_override=None, verbose=False, fyp2_waivable_courses=None):
     """
     horizon_slots: the actual ceiling the solver is allowed to search
         within (variable domains are bounded here). Pass a generous value
@@ -500,6 +564,13 @@ def build_and_solve(courses, horizon_slots, policy_horizon_slots=None, completed
     policy_horizon_slots: the "official" limit to check compliance
         against (e.g. 15 for AASTU's 5-year policy). If None, defaults to
         horizon_slots itself.
+
+    fyp2_waivable_courses: an ORDERED list of course codes the caller has
+        identified as eligible, for THIS student's stream, for the
+        FYP2_PREREQ_WAIVER escalation below (see solve_schedule.py for
+        the real ECE list). Order is the caller's preference for which
+        single course to try waiving first when more than one option
+        exists. Pass None or [] for curricula with no such nuance.
 
     TWO-PHASE OVERLOAD LOGIC (per explicit real-world feedback): the
     Year-5 credit overload is only a legitimate privilege when it's
@@ -520,9 +591,46 @@ def build_and_solve(courses, horizon_slots, policy_horizon_slots=None, completed
       result: overload doesn't help enough to matter, so it's not used,
       even though it might shave off a semester or two without actually
       reaching the target.
+
+    FYP2_PREREQ_WAIVER ESCALATION (only reached if Phase 1 AND Phase 2
+    both miss the policy horizon): a handful of specific courses are, in
+    real departmental practice, sometimes informally NOT insisted on as
+    a completed prerequisite for FYP-II -- a genuine but unofficial
+    inconsistency the department applies, not a written curriculum rule.
+    Per explicit instruction this is used under the exact same
+    discipline as the overload: ONLY if, and only if, doing so is what
+    actually closes the gap to the policy horizon -- never as a default,
+    and never preferred over the overload (the overload is an actual
+    documented campus rule; this waiver is not, so it's reached for only
+    once the documented mechanism has already been tried and found
+    insufficient). Escalates in order of how few courses it touches and
+    how intrusive the accommodation is:
+
+      1. Each candidate in fyp2_waivable_courses tried ALONE (in the
+         caller's given order), overload still OFF.
+      2. The full candidate set waived TOGETHER, overload still OFF.
+      3. Each candidate tried ALONE again, this time WITH overload ON.
+      4. The full candidate set waived TOGETHER, WITH overload ON.
+
+    The first attempt that reaches the policy horizon under a hard cap
+    (same feasibility-question discipline as the overload phase) wins.
+    If none do, falls back to Phase 1's honest result -- the waiver
+    doesn't help enough to matter, so it's not used, and no explanation
+    is fabricated for a course that wasn't actually the blocker.
+
+    Every returned result carries "fyp2_prereq_waivers_used": the exact
+    list of course codes waived to reach this result (empty unless this
+    escalation actually fired), so callers can build the required
+    student-facing explanation -- this is a nuance, not a rule, so it
+    must never be applied silently.
     """
     if policy_horizon_slots is None:
         policy_horizon_slots = horizon_slots
+    fyp2_waivable_courses = list(dict.fromkeys(fyp2_waivable_courses or []))  # de-dup, keep order
+
+    def _tag(result, waivers_used=()):
+        result["fyp2_prereq_waivers_used"] = sorted(waivers_used)
+        return result
 
     phase1 = _build_and_solve_core(
         courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
@@ -537,16 +645,16 @@ def build_and_solve(courses, horizon_slots, policy_horizon_slots=None, completed
     # returned as-is, since more credits per term can't fix those.
     if not phase1["feasible"]:
         if phase1.get("status") not in ("INFEASIBLE", "CAPSTONE_UNSCHEDULABLE"):
-            return phase1
+            return _tag(phase1)
         phase2_rescue = _build_and_solve_core(
             courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
             max_attempts, semester_types, normal_caps_override, verbose,
             allow_overload=True,
         )
-        return phase2_rescue if phase2_rescue["feasible"] else phase1
+        return _tag(phase2_rescue) if phase2_rescue["feasible"] else _tag(phase1)
 
     if phase1["graduation_slot"] <= policy_horizon_slots:
-        return phase1
+        return _tag(phase1)
 
     phase2 = _build_and_solve_core(
         courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
@@ -554,9 +662,25 @@ def build_and_solve(courses, horizon_slots, policy_horizon_slots=None, completed
         allow_overload=True, hard_grad_slot_cap=policy_horizon_slots,
     )
     if phase2["feasible"]:
-        return phase2
+        return _tag(phase2)
 
-    return phase1
+    if fyp2_waivable_courses:
+        candidate_sets = [{c} for c in fyp2_waivable_courses]
+        if len(fyp2_waivable_courses) > 1:
+            candidate_sets.append(set(fyp2_waivable_courses))
+
+        for use_overload in (False, True):
+            for waived in candidate_sets:
+                attempt = _build_and_solve_core(
+                    courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
+                    max_attempts, semester_types, normal_caps_override, verbose,
+                    allow_overload=use_overload, hard_grad_slot_cap=policy_horizon_slots,
+                    fyp2_waived_courses=waived,
+                )
+                if attempt["feasible"]:
+                    return _tag(attempt, waived)
+
+    return _tag(phase1)
 
 
 def solve_with_horizon_extension(courses, base_horizon, completed_courses=None, now_slot=0,

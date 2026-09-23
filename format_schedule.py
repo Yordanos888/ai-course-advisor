@@ -62,6 +62,35 @@ def _format_warnings(warnings):
     return lines
 
 
+def _format_fyp2_waiver_note(waivers):
+    """Explains a FYP2_PREREQ_WAIVER escalation to the student. This is
+    NOT a formal curriculum rule -- it's an informal accommodation the
+    department applies in practice, only when needed to keep a student
+    on the 5-year timeline -- so it must always be called out explicitly
+    and never blended in with ordinary notes/warnings, and the student
+    is pointed to the department office rather than left to assume it's
+    guaranteed."""
+    if not waivers:
+        return []
+    names = [_esc(w["name"]) for w in waivers]
+    if len(names) == 1:
+        names_str = names[0]
+    else:
+        names_str = ", ".join(names[:-1]) + " and " + names[-1]
+    lines = [
+        "",
+        "📌 <b>Practical exception applied:</b>",
+        (
+            f"To keep you on the standard 5-year timeline, this plan does NOT require "
+            f"{names_str} to be finished before your Final Year Project II -- this is a "
+            f"practical accommodation the department sometimes allows, not a formal "
+            f"curriculum rule, so please confirm it with the department office before "
+            f"relying on it."
+        ),
+    ]
+    return lines
+
+
 def _format_infeasible(result, header):
     lines = [header, ""]
     status = result.get("status")
@@ -92,6 +121,10 @@ def format_schedule_result(result, header="🎯 <b>Your Course Plan</b>", infeas
         return _format_infeasible(result, infeasible_header)
 
     lines = [header, "", _format_graduation_line(result), ""]
+    lines_extra = _format_fyp2_waiver_note(result.get("fyp2_prereq_waivers"))
+    if lines_extra:
+        lines.extend(lines_extra)
+        lines.append("")
     for year, sem in sorted(result["plan_by_term"].keys()):
         lines.append(_format_term_block(year, sem, result["plan_by_term"][(year, sem)]))
         lines.append("")
@@ -128,12 +161,20 @@ def format_stream_comparison(comparisons, stream_order=None):
         grad_note = f"Year {grad['year']}, Sem {grad['semester']}"
         if r["exceeds_5_year_policy"]:
             grad_note += " ⚠️"
+        waiver_note = " 📌" if r.get("fyp2_prereq_waivers") else ""
         remaining_terms = len(r["plan_by_term"])
         total_courses = sum(len(v) for v in r["plan_by_term"].values())
         lines.append(
             f"🛠️ <b>{_esc(stream)}</b>\n"
-            f"    🎓 Graduates: {grad_note}\n"
+            f"    🎓 Graduates: {grad_note}{waiver_note}\n"
             f"    <i>{remaining_terms} term(s) remaining, {total_courses} course(s) total</i>"
+        )
+        lines.append("")
+
+    if any((comparisons.get(s) or {}).get("fyp2_prereq_waivers") for s in stream_order):
+        lines.append(
+            "📌 <i>This stream's timeline relies on a practical departmental "
+            "exception, not a formal rule -- see the full plan for details.</i>"
         )
         lines.append("")
 

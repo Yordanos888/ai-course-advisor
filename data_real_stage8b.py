@@ -143,6 +143,7 @@ def load_real_courses_full(csv_path=None):
     for code in DEFERRED_TO_STAGE_8B:
         r = row_by_code[code]
         dept_scope = _parse_department_scope(r["Department Scope"])
+        year_level = int(r["Year Level"])
         semester_offered = int(r["Semester Offered"])
         alt_parity = None
         if len(dept_scope) > 1 and semester_offered in (1, 2):
@@ -151,12 +152,18 @@ def load_real_courses_full(csv_path=None):
         courses[code] = {
             "name": r["Course Name"].strip(),
             "credit_hours": int(r["Credit Hours"]),
-            "year_level": int(r["Year Level"]),
+            "year_level": year_level,
             "semester_offered": semester_offered,
             "alt_parity": alt_parity,
             "department_scope": dept_scope,
             "streams": _parse_streams(r["Stream Scope"]),
             "is_droppable": r["Is Droppable"].strip().upper() == "TRUE",
+            # True once genuinely part of the ECE department curriculum,
+            # False for the university-wide pre-department-enrollment
+            # courses -- see db_loader.py's matching field for the full
+            # rationale. (All 3 deferred rows here are Year 4-5, so this
+            # is always True for them; the field is set for consistency.)
+            "is_major": not (year_level == 1 or (year_level == 2 and semester_offered == 1)),
             **special_fields[code],
         }
 

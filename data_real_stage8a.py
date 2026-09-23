@@ -46,7 +46,7 @@ fact -- flagged here and worth re-confirming with the department later.
 
 import csv
 
-CSV_PATH = "C:/Users/yrdns/OneDrive/Desktop/AI/Project/AI-course advisor/ai-course-advisor/Reasoning_engine/ece_curriculum.csv"
+CSV_PATH = "/home/claude/ece_curriculum.csv"
 
 DEFERRED_TO_STAGE_8B = {"ECEg4112", "ECEg5108", "NEE5108"}
 
@@ -92,6 +92,7 @@ def load_real_courses(csv_path=CSV_PATH, include_deferred=False):
             continue
 
         dept_scope = _parse_department_scope(r["Department Scope"])
+        year_level = int(r["Year Level"])
         semester_offered = int(r["Semester Offered"])
 
         alt_parity = None
@@ -101,13 +102,20 @@ def load_real_courses(csv_path=CSV_PATH, include_deferred=False):
         courses[code] = {
             "name": r["Course Name"].strip(),
             "credit_hours": int(r["Credit Hours"]),
-            "year_level": int(r["Year Level"]),
+            "year_level": year_level,
             "semester_offered": semester_offered,
             "alt_parity": alt_parity,
             "department_scope": dept_scope,
             "streams": _parse_streams(r["Stream Scope"]),
             "prereqs": _parse_prereqs_simple(r["Prerequisites (Split by commas)"]),
             "is_droppable": r["Is Droppable"].strip().upper() == "TRUE",
+            # True once genuinely part of the ECE department curriculum,
+            # False for the university-wide pre-department-enrollment
+            # courses (Year 1, and Year 2 Sem 1's "pre-Engineering common"
+            # term) -- see db_loader.py's matching field for the full
+            # rationale (Department Scope was tried and rejected: it
+            # tracks administering entity, not major-curriculum status).
+            "is_major": not (year_level == 1 or (year_level == 2 and semester_offered == 1)),
         }
 
     return courses, skipped

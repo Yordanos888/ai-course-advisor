@@ -6,6 +6,7 @@ from telegram.ext import (
     ContextTypes, filters, ConversationHandler
 )
 
+
 from query_api import (
     get_course_details_formatted,
     get_downstream_impact_formatted,
@@ -20,6 +21,8 @@ from student_service import (
     looks_like_student_id
 )
 from orchestrator import process_reasoning_request
+from gpa_bot import gpa_conv_handler
+
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -75,6 +78,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/cross_department - List cross-department courses\n"
         "/cross_stream - List cross-stream courses\n"
         "/course_planning - Generate a multi-semester recovery plan\n"
+        "/gpa - Calculate your SGPA/CGPA"
     )
 
     if student:
@@ -360,6 +364,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_planning)]
     )
     app.add_handler(planning_handler)
+    app.add_handler(gpa_conv_handler)
 
     # Catch-all for non-command text (handles registration if not registered)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_registration))

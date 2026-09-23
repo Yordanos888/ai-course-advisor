@@ -116,6 +116,12 @@ class Prerequisite(Base):
     # UPGRADE 2: Filterable stream context for conditional prerequisites (e.g. IDP)
     applicable_stream_id = Column(Integer, ForeignKey('streams.id'), nullable=True) # NULL = applies to all streams
 
+    # Free-text annotation for this specific prerequisite link (e.g. a
+    # departmental nuance or clarification an admin wants on record).
+    # app.py's prerequisite-management form has always collected and
+    # saved this; the column was simply missing from the model.
+    note = Column(String, nullable=True)
+
     applicable_stream = relationship("Stream")
 
 

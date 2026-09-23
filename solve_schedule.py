@@ -37,6 +37,36 @@ POLICY_HORIZON_SLOTS = 15  # 5 years -- the officially targeted completion time
 
 ALL_STREAMS = ["Computer", "Communication", "Control", "Power"]
 
+# FYP2_PREREQ_WAIVER_CANDIDATES: courses the department will, in real
+# practice, sometimes NOT insist on as a completed prerequisite for
+# FYP-II (ECEg5108) -- a genuine but informal inconsistency, confirmed
+# explicitly, not a written curriculum rule. build_and_solve() only ever
+# reaches for these after the documented overload mechanism has already
+# been tried and found insufficient (see its docstring), and only when
+# waiving one actually closes the gap to the 5-year policy horizon.
+#
+# Per-stream candidates, in the order they should be tried singly before
+# the full set is tried together:
+FYP2_PREREQ_WAIVER_CANDIDATES_BY_STREAM = {
+    "Computer": ["ECEg4410"],                  # Database Systems
+    "Communication": ["ECEg4102"],              # Microprocessors and Interfacing
+    "Power": ["ECEg4102", "ECEg4510"],          # Microprocessors and Interfacing, Modern Control Systems
+    "Control": ["ECEg4506"],                    # Process Control Fundamentals
+}
+# Applies on top of the stream-specific list above, for every stream.
+FYP2_PREREQ_WAIVER_UNIVERSAL_CANDIDATE = "ECEg4112"  # Integrated Design Project
+
+
+def _fyp2_waiver_candidates_for_stream(stream_short_name):
+    """Ordered candidate list for THIS student's stream: the stream-
+    specific courses first (as the department would reach for the more
+    specific accommodation first), then the universal one common to
+    every stream."""
+    candidates = list(FYP2_PREREQ_WAIVER_CANDIDATES_BY_STREAM.get(stream_short_name, []))
+    if FYP2_PREREQ_WAIVER_UNIVERSAL_CANDIDATE not in candidates:
+        candidates.append(FYP2_PREREQ_WAIVER_UNIVERSAL_CANDIDATE)
+    return candidates
+
 
 def year_sem_to_slot(year, sem, semester_types=(1, 2, 3)):
     types_per_year = len(semester_types)
@@ -252,12 +282,15 @@ def solve_schedule_for_student(session, current_year, current_sem, stream_short_
         set(failed_course_codes), added_course_codes, dropped_course_codes,
     )
 
+    waiver_candidates = [c for c in _fyp2_waiver_candidates_for_stream(stream_short_name) if c in resolved]
+
     result = build_and_solve(
         courses=resolved,
         horizon_slots=SOLVE_HORIZON_SLOTS,
         policy_horizon_slots=POLICY_HORIZON_SLOTS,
         completed_courses=completed,
         now_slot=now_slot,
+        fyp2_waivable_courses=waiver_candidates,
     )
 
     if not result["feasible"]:
@@ -292,12 +325,23 @@ def solve_schedule_for_student(session, current_year, current_sem, stream_short_
 
     grad_year, grad_sem = slot_to_year_sem(result["graduation_slot"])
 
+    # fyp2_prereq_waivers: resolved to {code, name} for the explanation
+    # format_schedule.py must show whenever this fired -- this is an
+    # informal departmental nuance, not a written rule, so it can never
+    # be applied without telling the student exactly what happened.
+    fyp2_prereq_waivers = [
+        {"code": c, "name": resolved[c]["name"]}
+        for c in result.get("fyp2_prereq_waivers_used", [])
+        if c in resolved
+    ]
+
     return {
         "feasible": True,
         "stream": stream_short_name,
         "plan_by_term": plan_by_term,
         "graduation": {"year": grad_year, "semester": grad_sem},
         "exceeds_5_year_policy": result["exceeds_policy_horizon"],
+        "fyp2_prereq_waivers": fyp2_prereq_waivers,
         "warnings": warnings,
     }
 
