@@ -41,6 +41,15 @@ AWAITING_YEAR, AWAITING_SEMESTER, AWAITING_STREAM, AWAITING_FAILED, \
 
 STREAM_NAMES = ["Computer", "Communication", "Control", "Power"]
 
+async def error_handler(update, context):
+    logger.error(f"Update {update} caused error: {context.error}")
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Connection hiccup — please resend your last message."
+            )
+        except Exception:
+            pass  # if even this fails, just let it drop
 
 def _parse_course_list(text: str):
     """'None' (any case) -> empty list; otherwise split on commas."""
@@ -338,7 +347,16 @@ def main():
     from dotenv import load_dotenv
     load_dotenv()
 
-    app = Application.builder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
+    app = (
+    Application.builder()
+    .token(os.getenv("TELEGRAM_BOT_TOKEN"))
+    .connect_timeout(30)
+    .read_timeout(30)
+    .write_timeout(30)
+    .pool_timeout(30)
+    .build()
+)
+    app.add_error_handler(error_handler)
 
     # Base commands
     app.add_handler(CommandHandler("start", start_command))

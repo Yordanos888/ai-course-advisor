@@ -1,4 +1,5 @@
 import datetime
+import os
 from sqlalchemy import (
     create_engine, 
     Column, 
@@ -15,7 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, relationship
 
 DATABASE_URL = "sqlite:///academic_records.db"
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(DATABASE_URL, echo=os.environ.get("SQL_ECHO", "false").lower() == "true")
 
 Base = declarative_base()
 
