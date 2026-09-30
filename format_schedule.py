@@ -81,7 +81,7 @@ def _format_fyp2_waiver_note(waivers):
         "",
         "📌 <b>Practical exception applied:</b>",
         (
-            f"To keep you on the standard 5-year timeline, this plan does NOT require "
+            f"To reduce a whole one overhead year, this plan does NOT require "
             f"{names_str} to be finished before your Final Year Project II -- this is a "
             f"practical accommodation the department sometimes allows, not a formal "
             f"curriculum rule, so please confirm it with the department office before "

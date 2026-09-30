@@ -29,7 +29,8 @@ reports.
 """
 
 from db_loader import load_raw_courses_from_db, filter_and_resolve_for_student
-from model_stage8_fixed import build_and_solve, slot_to_year_sem, natural_slot_for_course
+from model_stage8_fixed import (build_and_solve, slot_to_year_sem, natural_slot_for_course,
+                                stream_enrollment_floor_slot, cap_for_slot, _is_major_course)
 
 SOLVE_HORIZON_SLOTS = 45   # 15 years -- generous, so the solver always finds
                            # a real plan rather than a bare "no solution"
@@ -271,6 +272,216 @@ def build_implicit_history(resolved_courses, current_year, current_sem,
     return completed, now_slot, warnings
 
 
+# CROWD RELIEF SCOPE: deliberately narrowed to ONE course. The general
+# rule (any droppable, all-stream course at/after 4Y2S) let relief undo
+# the solver's legal plan (e.g. pulling Microprocessors back into a full
+# semester). Only this course may be rebalanced now.
+CROWD_RELIEF_ELIGIBLE_COURSES = {"IEng5104"}   # Industrial Management and Engineering Economy
+
+
+def apply_crowd_relief(schedule, resolved, now_slot, normal_caps=None, waived=()):
+    """
+    Post-processing pass: rebalances same-parity future semesters by
+    moving eligible courses from crowded terms to lighter ones.
+
+    SCOPE (current): only courses in CROWD_RELIEF_ELIGIBLE_COURSES (just
+    Industrial Management and Engineering Economy) may move, and the
+    National Exit Exam (ALL_COURSES) is excluded from the per-term course
+    counts. Every rule below still applies on top of that.
+
+    WHAT QUALIFIES AS A RELIEF CANDIDATE:
+        A course is eligible for crowd relief if and only if ALL of:
+          1. It is scheduled in a FUTURE slot (slot > now_slot).
+          2. Its 'streams' field is None (common to all streams -- not
+             stream-specific or a subset-of-streams course).
+          3. It is droppable (is_droppable == True or absent).
+          4. Its semester parity is 1 or 2 (Semester 3 is the Industry
+             Internship slot -- never touched by crowd relief).
+          5. Its NATURAL slot (year_level, semester_offered) is at or
+             after 4Y2S -- where stream enrollment actually begins.
+             Pre-stream courses (Years 1 through 4Y1S) are excluded
+             entirely, even if they happen to be all-stream and droppable.
+
+    SAME-PARITY RULE:
+        A course at a semester-1 slot can only be moved to another
+        semester-1 slot, and likewise for semester-2. This preserves
+        the curriculum's parity discipline (courses offered in sem-1
+        are offered in sem-1, etc.). The target slot has no lower bound
+        -- a streaming-period course can be moved to any earlier
+        same-parity slot if doing so relieves the imbalance and the
+        prerequisite chain allows it.
+
+    TRIGGER CONDITION:
+        A move is only attempted when the source term's course count
+        minus the target term's course count is >= 2. This guarantees
+        the move reduces the source by 1 and increases the target by 1,
+        making both counts converge by at least 1 -- a genuine,
+        measurable relief. A difference of 1 would merely swap the
+        imbalance from one term to the other.
+
+    PREREQUISITE SAFETY:
+        A candidate can be moved from slot S_src to slot S_dst only if:
+          a. S_dst is a future slot that has the correct parity.
+          b. Every prerequisite of the candidate is scheduled BEFORE
+             S_dst (strictly, slot < S_dst) -- the candidate still
+             can't start until its dependencies are done.
+          c. No course that lists the candidate as a prerequisite is
+             scheduled at or before S_dst -- the candidate must finish
+             before any of its dependents start. Since the slot model
+             uses strict ">" for prereqs, a dependent at slot D
+             requires the candidate at slot D-1 or earlier; moving
+             the candidate to S_dst is safe only if every dependent is
+             at a slot STRICTLY AFTER S_dst.
+
+    GREEDY ITERATION:
+        The pass loops, each iteration scanning all (candidate, target)
+        pairs and picking the move with the largest course-count
+        differential. It stops when no qualifying move remains. This
+        converges quickly because every move reduces at least one
+        term's count.
+
+    HARD RULES A MOVE MAY NEVER BREAK (the same rules CP-SAT enforces):
+        d. CREDIT CAP: the destination must stay within its cap -- the
+           semester's normal cap, or 22 for a Year-5 slot the solver
+           ALREADY overloaded. Relief never creates a new overload.
+        e. GATES: a move to a LATER slot must not push a major course past
+           FYP-II (unless waived) or any course past the NEE, and must
+           not extend graduation.
+
+    NOTE: This function operates directly on the raw slot dict
+    (code -> slot_number) returned by the solver, not on plan_by_term.
+    It is a pure transformation: takes the schedule dict, returns a
+    (possibly modified) copy. The caller (solve_schedule_for_student)
+    applies it before building plan_by_term, so format_schedule.py
+    sees the already-balanced result with no further changes needed.
+    """
+    # Work on a mutable copy -- never modify the solver's own output.
+    schedule = dict(schedule)
+
+    # Build a reverse map: for each course, which OTHER courses list it
+    # as a prerequisite. Used for safety check (c).
+    dependents_of = {code: [] for code in resolved}
+    for code, info in resolved.items():
+        for p in info.get("prereqs", []):
+            if p in dependents_of:
+                dependents_of[p].append(code)
+
+    def _is_relief_candidate(code):
+        info = resolved[code]
+        if code not in CROWD_RELIEF_ELIGIBLE_COURSES:
+            return False                          # relief is limited to one course
+        if schedule.get(code, 0) <= now_slot:
+            return False                          # historical / not planned
+        if info.get("streams") is not None:
+            return False                          # stream-specific course
+        if not info.get("is_droppable", info.get("droppable", True)):
+            return False                          # non-droppable (internship, FYP, NEE)
+        _, sem = slot_to_year_sem(schedule[code])
+        if sem not in (1, 2):
+            return False                          # sem-3 (internship slot) -- skip
+        if natural_slot_for_course(info) < stream_enrollment_floor_slot():
+            return False                          # pre-stream course (before 4Y2S)
+        return True
+
+    normal_caps = normal_caps or {}
+    waived = set(waived or ())
+    slot_loads = {}
+
+    def _cap_allows(code, s_dst):
+        if not normal_caps:
+            return True                       # no cap info supplied
+        year, sem = slot_to_year_sem(s_dst)
+        normal = normal_caps.get((year, sem), 0)
+        cap = cap_for_slot(s_dst, normal_caps, year5_override=normal)
+        if year == 5 and slot_loads.get(s_dst, 0) > normal:
+            cap = max(cap, 22)                # overload already legitimately in use
+        return slot_loads.get(s_dst, 0) + resolved[code]["credit_hours"] <= cap
+
+    def _gates_allow(code, s_dst):
+        if s_dst <= schedule[code]:
+            return True                       # moving earlier can't break a gate
+        if s_dst > max(schedule.values()):
+            return False                      # would extend graduation
+        c_nat = natural_slot_for_course(resolved[code])
+        for f, fi in resolved.items():
+            if f == code or f not in schedule:
+                continue
+            sr = fi.get("special_requirement")
+            if sr == "ALL_COURSES" and s_dst > schedule[f]:
+                return False
+            if (sr == "ALL_STREAM_COURSES" and code not in waived
+                    and _is_major_course(resolved[code])):
+                same_natural = natural_slot_for_course(fi) == c_nat
+                if s_dst > schedule[f] or (s_dst == schedule[f] and not same_natural):
+                    return False
+        return True
+
+    def _move_is_safe(code, s_dst):
+        """True if moving `code` to slot s_dst violates no prereq, cap or gate rule."""
+        if not _cap_allows(code, s_dst) or not _gates_allow(code, s_dst):
+            return False
+        # (b) all prereqs must finish before s_dst
+        for p in resolved[code].get("prereqs", []):
+            if p in schedule and schedule[p] >= s_dst:
+                return False
+        # (c) all dependents of code must start after s_dst
+        for dep in dependents_of.get(code, []):
+            if dep in schedule and schedule[dep] <= s_dst:
+                return False
+        return True
+
+    changed = True
+    while changed:
+        changed = False
+
+        # Count courses per future slot (by slot number, not (year,sem))
+        slot_counts = {}
+        for code, s in schedule.items():
+            if s > now_slot and resolved[code].get("special_requirement") != "ALL_COURSES":
+                slot_counts[s] = slot_counts.get(s, 0) + 1   # NEE is a one-time exam, not counted
+        slot_loads.clear()
+        for code, s in schedule.items():
+            if s > now_slot:
+                slot_loads[s] = slot_loads.get(s, 0) + resolved[code]["credit_hours"]
+
+        # Group future slots by their semester parity
+        parity_slots = {}  # parity (1 or 2) -> sorted list of future slots
+        for s in slot_counts:
+            _, sem = slot_to_year_sem(s)
+            if sem in (1, 2):
+                parity_slots.setdefault(sem, []).append(s)
+        for sem in parity_slots:
+            parity_slots[sem].sort()
+
+        # Find the best (most relieving) move among all candidates
+        best_move = None   # (code, s_src, s_dst, differential)
+        for code in list(schedule):
+            if not _is_relief_candidate(code):
+                continue
+            s_src = schedule[code]
+            _, parity = slot_to_year_sem(s_src)
+            src_count = slot_counts.get(s_src, 0)
+
+            for s_dst in parity_slots.get(parity, []):
+                if s_dst == s_src:
+                    continue
+                dst_count = slot_counts.get(s_dst, 0)
+                diff = src_count - dst_count
+                if diff < 2:
+                    continue            # trigger condition not met
+                if not _move_is_safe(code, s_dst):
+                    continue
+                if best_move is None or diff > best_move[3]:
+                    best_move = (code, s_src, s_dst, diff)
+
+        if best_move is not None:
+            code, s_src, s_dst, _ = best_move
+            schedule[code] = s_dst
+            changed = True
+
+    return schedule
+
+
 def solve_schedule_for_student(session, current_year, current_sem, stream_short_name,
                                  failed_course_codes, added_course_codes=None,
                                  dropped_course_codes=None):
@@ -301,8 +512,20 @@ def solve_schedule_for_student(session, current_year, current_sem, stream_short_
             "warnings": warnings,
         }
 
+    # Apply crowd relief: rebalance same-parity terms by moving eligible
+    # courses from crowded semesters to lighter ones before rendering.
+    # This is a post-processing pass -- the solver's constraint guarantees
+    # are unchanged; crowd relief only touches droppable, all-stream courses
+    # and only when a move is both safe (prereqs satisfied) and genuinely
+    # reduces the imbalance by at least one course in each direction.
+    schedule = apply_crowd_relief(
+        result["schedule"], resolved, now_slot,
+        normal_caps=result.get("normal_caps_used", {}),
+        waived=result.get("fyp2_prereq_waivers_used", []),
+    )
+
     plan_by_term = {}
-    for code, slot in result["schedule"].items():
+    for code, slot in schedule.items():
         if slot <= now_slot:
             continue  # historical, not part of the forward-looking plan
         year, sem = slot_to_year_sem(slot)
@@ -335,14 +558,28 @@ def solve_schedule_for_student(session, current_year, current_sem, stream_short_
         if c in resolved
     ]
 
+    # explain_context: a lightweight bundle the explainability layer needs.
+    # Kept separate from the main return keys so format_schedule.py never
+    # has to know it exists (it accesses only plan_by_term, graduation, etc.).
+    explain_context = {
+        "schedule": schedule,            # crowd-relief-applied {code: slot}
+        "courses": resolved,             # {code: info} with prereqs, credits…
+        "completed": completed,          # {code: [{status, slot}]}
+        "now_slot": now_slot,
+        "normal_caps": result.get("normal_caps_used", {}),
+        "waived": [w["code"] for w in fyp2_prereq_waivers],
+    }
+
     return {
         "feasible": True,
         "stream": stream_short_name,
         "plan_by_term": plan_by_term,
         "graduation": {"year": grad_year, "semester": grad_sem},
+        "graduation_slot": result["graduation_slot"],
         "exceeds_5_year_policy": result["exceeds_policy_horizon"],
         "fyp2_prereq_waivers": fyp2_prereq_waivers,
         "warnings": warnings,
+        "explain_context": explain_context,
     }
 
 

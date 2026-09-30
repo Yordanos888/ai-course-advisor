@@ -135,18 +135,22 @@ def _persist_course_history(session, student, year, sem, failed_codes,
             ))
 
 
-def _format_header(year, sem, stream_name, failed_codes, added_codes, dropped_codes, unresolved):
+def _format_header(year, sem, stream_name, failed_codes, added_codes, dropped_codes, unresolved, session):
+    def _name(code):
+        c = session.query(Course).filter_by(course_code=code).first()
+        return c.name if c else code
+
     header = f"✅ <b>Profile Updated:</b> Year {year}, Sem {sem}\n"
     if stream_name:
         header += f"Stream: {stream_name}\n"
     if failed_codes:
-        header += f"Failed: {', '.join(failed_codes)}\n"
+        header += f"Failed: {', '.join(_name(c) for c in failed_codes)}\n"
     else:
         header += "Failed: None (all past courses assumed passed)\n"
     if added_codes:
-        header += f"Added ahead of schedule: {', '.join(added_codes)}\n"
+        header += f"Added ahead of schedule: {', '.join(_name(c) for c in added_codes)}\n"
     if dropped_codes:
-        header += f"Dropped: {', '.join(dropped_codes)}\n"
+        header += f"Dropped: {', '.join(_name(c) for c in dropped_codes)}\n"
     if unresolved:
         header += f"⚠️ Unrecognized (skipped): {', '.join(unresolved)}\n"
     return header
@@ -157,6 +161,20 @@ def process_reasoning_request(student, year: int, sem: int, stream_name: str,
                                 dropped_courses: list = None) -> str:
     """added_courses / dropped_courses default to None so any existing
     caller passing only the original five arguments keeps working."""
+    text, _ = process_reasoning_request_full(
+        student, year, sem, stream_name, failed_courses, added_courses, dropped_courses
+    )
+    return text
+
+
+def process_reasoning_request_full(student, year: int, sem: int, stream_name: str,
+                                    failed_courses: list, added_courses: list = None,
+                                    dropped_courses: list = None):
+    """Like process_reasoning_request but returns (formatted_text, raw_result)
+    where raw_result is the solve_schedule_for_student dict (or the stream
+    comparison dict when stream_name is None).  The raw result carries
+    'explain_context' for feasible single-stream solves.
+    """
     session = Session()
     student = session.merge(student)
     try:
@@ -170,17 +188,18 @@ def process_reasoning_request(student, year: int, sem: int, stream_name: str,
                                  added_codes, dropped_codes)
         session.commit()
 
+        raw_result = None
         if stream_name:
-            result = solve_schedule_for_student(
+            raw_result = solve_schedule_for_student(
                 session, year, sem, stream_name, failed_codes, added_codes, dropped_codes)
-            body = format_schedule_result(result)
+            body = format_schedule_result(raw_result)
         else:
-            comparisons = compare_all_streams(
+            raw_result = compare_all_streams(
                 session, year, sem, failed_codes, added_codes, dropped_codes)
-            body = format_stream_comparison(comparisons)
+            body = format_stream_comparison(raw_result)
 
         header = _format_header(year, sem, stream_name, failed_codes,
-                                 added_codes, dropped_codes, unresolved)
-        return header + "\n" + body
+                                 added_codes, dropped_codes, unresolved, session)
+        return header + "\n" + body, raw_result
     finally:
         session.close()

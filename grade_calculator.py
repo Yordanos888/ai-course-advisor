@@ -39,6 +39,7 @@ product decision: "no rounding [beyond that]. use two decimal places").
 """
 
 import re
+import math
 
 # ---------------------------------------------------------------------
 # Grade scale
@@ -51,6 +52,31 @@ GRADE_POINTS = {
     "D": 1.00, "F": 0.00,
 }
 VALID_GRADES = list(GRADE_POINTS.keys())
+
+
+def _ceiling_round(value, decimals=2):
+    """
+    Rounds UP to the given number of decimals -- NOT the nearest value.
+
+    This matters specifically for the required-SGPA calculation: standard
+    round() can round a true requirement like 3.5631... DOWN to 3.56,
+    but a student who then achieves exactly 3.56 falls a hair short of
+    the actual goal (3.56 * credits < the points truly needed). Rounding
+    UP instead guarantees that hitting the displayed number is always
+    genuinely sufficient -- and it's still the smallest such 2-decimal
+    number, i.e. the true achievable minimum, not just "close to" it.
+
+    A small extra round() at higher precision guards against float noise
+    (e.g. a value that's mathematically exactly 3.56 landing at
+    3.5600000000000005 due to floating-point arithmetic) from being
+    pushed up to 3.57 by mistake.
+
+    NOTE: This function is retained for general use, but compute_required_sgpa
+    no longer calls it -- that function now uses pure integer arithmetic
+    (see its docstring) which is exact and immune to float noise entirely.
+    """
+    factor = 10 ** decimals
+    return math.ceil(round(value, decimals + 6) * factor) / factor
 
 
 def normalize_grade(raw):
@@ -69,6 +95,34 @@ def _is_streaming_period(year, sem):
     return year > 4 or (year == 4 and sem >= 2)
 
 
+def is_out_of_batch(year, sem):
+    """True for any semester beyond the official 5-year ECE curriculum (i.e. year > 5).
+    Out-of-batch semesters have no courses in the DB; the student must supply
+    credit-hour totals manually."""
+    return year > 5
+
+
+MAX_PLANNING_YEAR = 10  # generous ceiling; supports out-of-batch students beyond Y5S2
+
+
+def semesters_for_year(year):
+    """
+    Which semester numbers exist within a given academic year.
+
+    Every year normally has semesters 1 and 2 (per the campus rule: "a
+    fixed semester, either 1st or 2nd, in each year"). Year 4 is the ONE
+    exception: it also has a 3rd, summer-position term -- the Industry
+    Internship (ECEg4100, 6 credit hours, confirmed against the real
+    curriculum) -- which the student takes and is graded for like any
+    other semester (its own SGPA out of 4.00), even though no other year
+    has anything at semester_offered=3. This is NOT a uniform "3
+    semesters every year" system; the summer slot only exists in Year 4.
+    """
+    if year == 4:
+        return [1, 2, 3]
+    return [1, 2]
+
+
 def parse_semester_token(text):
     """'3Y2S' / '3y2s' / '3 Y 2 S' -> (3, 2). None if it doesn't match."""
     m = re.match(r"^\s*(\d)\s*[Yy]\s*(\d)\s*[Ss]\s*$", text.strip())
@@ -77,42 +131,88 @@ def parse_semester_token(text):
     return int(m.group(1)), int(m.group(2))
 
 
+def parse_year_sem_input(text):
+    """
+    Parses a combined year+semester reply -- '4, 2', '4,2', '4 2', or the
+    compact '4Y2S' token, whichever the student naturally types.
+    Returns (year, sem) as ints. Raises ValueError (human-readable) on
+    anything else -- does NOT validate that the semester actually exists
+    for that year; call validate_year_sem() separately for that.
+    """
+    text = text.strip()
+    token = parse_semester_token(text)
+    if token:
+        return token
+
+    parts = [p for p in re.split(r"[,\s]+", text) if p]
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        raise ValueError("Please enter your year and semester together, e.g. '4, 2'.")
+    return int(parts[0]), int(parts[1])
+
+
+def validate_year_sem(year, sem):
+    """True if (year, sem) is a real, selectable semester.
+    Years 6+ (out-of-batch) are accepted with semesters 1 and 2 only."""
+    if not (1 <= year <= MAX_PLANNING_YEAR):
+        return False
+    return sem in semesters_for_year(year)
+
+
 def format_semester_token(year, sem):
     return f"{year}Y{sem}S"
+
+
+def format_semester_list(window):
+    """Human phrasing for a list of (year, sem) tuples:
+    one -> '4Y1S'; two -> '4Y1S and 4Y2S'; three+ -> 'A, B, and C'."""
+    tokens = [format_semester_token(y, s) for (y, s) in window]
+    if len(tokens) == 1:
+        return tokens[0]
+    if len(tokens) == 2:
+        return f"{tokens[0]} and {tokens[1]}"
+    return ", ".join(tokens[:-1]) + f", and {tokens[-1]}"
+
+
+def _ordered_semesters(up_to_year):
+    """All (year, sem) pairs in chronological order from (1, 1) through
+    the last semester of up_to_year, inclusive -- respecting
+    semesters_for_year's per-year semester count (Year 4's extra
+    Internship term included in its proper place)."""
+    seq = []
+    for y in range(1, up_to_year + 1):
+        for s in semesters_for_year(y):
+            seq.append((y, s))
+    return seq
 
 
 def semesters_in_window(start_year, start_sem, end_year, end_sem):
     """
     Ordered list of (year, sem) tuples from (start_year, start_sem)
-    through (end_year, end_sem) inclusive, stepping through the
-    curriculum's 2-semester-per-year structure.
-    Raises ValueError if the end is before the start.
+    through (end_year, end_sem) inclusive. Raises ValueError if either
+    endpoint isn't a real semester, or if the end is before the start.
     """
-    def to_index(y, s):
-        return (y - 1) * 2 + (s - 1)
+    if not validate_year_sem(start_year, start_sem):
+        raise ValueError(f"{format_semester_token(start_year, start_sem)} isn't a real semester.")
+    if not validate_year_sem(end_year, end_sem):
+        raise ValueError(f"{format_semester_token(end_year, end_sem)} isn't a real semester.")
 
-    start_idx = to_index(start_year, start_sem)
-    end_idx = to_index(end_year, end_sem)
+    seq = _ordered_semesters(max(start_year, end_year, MAX_PLANNING_YEAR))
+    start_idx = seq.index((start_year, start_sem))
+    end_idx = seq.index((end_year, end_sem))
     if end_idx < start_idx:
         raise ValueError("The target semester can't be before the current semester.")
-
-    window = []
-    idx = start_idx
-    while idx <= end_idx:
-        y = idx // 2 + 1
-        s = idx % 2 + 1
-        window.append((y, s))
-        idx += 1
-    return window
+    return seq[start_idx:end_idx + 1]
 
 
 def semesters_before(year, sem):
     """All (y, s) pairs strictly before (year, sem), starting at (1, 1)."""
-    if year < 1 or sem not in (1, 2):
-        raise ValueError("Invalid semester.")
-    if year == 1 and sem == 1:
+    if not validate_year_sem(year, sem):
+        raise ValueError(f"{format_semester_token(year, sem)} isn't a real semester.")
+    if (year, sem) == (1, 1):
         return []
-    return semesters_in_window(1, 1, year, sem)[:-1]
+    seq = _ordered_semesters(max(year, MAX_PLANNING_YEAR))
+    idx = seq.index((year, sem))
+    return seq[:idx]
 
 
 def parse_credit_override_string(text):
@@ -212,39 +312,60 @@ def compute_required_sgpa(prev_total_credits, current_cgpa, future_credits_by_se
     to make up for a lower one elsewhere).
 
     Returns one of:
-        {"feasible": True, "already_secured": True}
+        {"feasible": True, "already_secured": True, "required_sgpa": 0.0}
             -- goal is already mathematically guaranteed (required <= 0)
-        {"feasible": False, "reason": "..."}
-            -- required SGPA would exceed 4.00, i.e. impossible
+        {"feasible": False, "required_sgpa": float}
+            -- required SGPA would exceed 4.00, i.e. impossible. The
+            value is still returned (ceiling-rounded) so the caller can
+            report exactly how far past 4.00 it would need to go; NO
+            sentence is composed here, since whether it reads "in that
+            semester" or "across your remaining semesters" depends on
+            how many future semesters there are -- something only the
+            caller (gpa_bot.py) knows. Composing the full message here
+            would either hardcode a plural that reads wrong for a
+            single-semester window, or require this pure-math module to
+            take on UI phrasing.
         {"feasible": True, "already_secured": False, "required_sgpa": float}
             -- the normal case
+
+    PRECISION: uses pure integer arithmetic to eliminate floating-point
+    errors entirely. Since current_cgpa and goal_cgpa are always 2-decimal-
+    place values (the system enforces this), we convert them to integer
+    "cents" (multiply by 100), perform all operations in integer space,
+    and use integer ceiling division -- (a + b - 1) // b -- which is
+    exact by definition. This prevents the class of bugs where a
+    mathematically-exact required SGPA of, say, 3.79 is represented as
+    3.7900000001 in float, causing a spurious ceiling step to 3.80.
     """
     total_future_credits = sum(future_credits_by_semester)
     if total_future_credits <= 0:
         raise ValueError("Total future credit hours must be greater than zero.")
 
-    prior_points = current_cgpa * prev_total_credits
-    total_credits_at_goal = prev_total_credits + total_future_credits
-    required_total_points = goal_cgpa * total_credits_at_goal
-    needed_points = required_total_points - prior_points
+    # Convert 2-decimal CGPA floats to integer cents to enable exact arithmetic.
+    curr_cents = round(current_cgpa * 100)
+    goal_cents = round(goal_cgpa * 100)
+    total_credits = prev_total_credits + total_future_credits
 
-    required_sgpa = needed_points / total_future_credits
+    # needed_points = goal * total_credits - curr * prev_total_credits
+    # Multiplied by 100 to stay in integer space:
+    needed_cents = goal_cents * total_credits - curr_cents * prev_total_credits
 
-    if required_sgpa <= 0:
+    if needed_cents <= 0:
         return {"feasible": True, "already_secured": True, "required_sgpa": 0.0}
 
-    if required_sgpa > 4.0:
-        return {
-            "feasible": False,
-            "reason": (
-                f"Reaching a {goal_cgpa:.2f} CGPA by then would require a "
-                f"{required_sgpa:.2f} average SGPA across your remaining semesters, "
-                f"which is above the maximum possible (4.00). This goal is not "
-                f"mathematically achievable in that timeframe."
-            ),
-        }
+    # required_sgpa = needed_cents / (total_future_credits * 100)
+    # Ceiling at 2 decimals = ceil(needed_cents / total_future_credits) / 100
+    # Integer ceiling: (a + b - 1) // b  (exact, no float division needed)
+    required_hundredths = (needed_cents + total_future_credits - 1) // total_future_credits
 
-    return {"feasible": True, "already_secured": False, "required_sgpa": round(required_sgpa, 2)}
+    if required_hundredths > 400:
+        return {"feasible": False, "required_sgpa": required_hundredths / 100}
+
+    return {
+        "feasible": True,
+        "already_secured": False,
+        "required_sgpa": min(required_hundredths / 100, 4.0),
+    }
 
 
 # ---------------------------------------------------------------------

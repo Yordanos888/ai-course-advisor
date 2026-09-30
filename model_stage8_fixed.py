@@ -597,14 +597,36 @@ def build_and_solve(courses, horizon_slots, policy_horizon_slots=None, completed
     real departmental practice, sometimes informally NOT insisted on as
     a completed prerequisite for FYP-II -- a genuine but unofficial
     inconsistency the department applies, not a written curriculum rule.
-    Per explicit instruction this is used under the exact same
-    discipline as the overload: ONLY if, and only if, doing so is what
-    actually closes the gap to the policy horizon -- never as a default,
-    and never preferred over the overload (the overload is an actual
-    documented campus rule; this waiver is not, so it's reached for only
-    once the documented mechanism has already been tried and found
-    insufficient). Escalates in order of how few courses it touches and
-    how intrusive the accommodation is:
+    Per explicit instruction this is used under the same "genuinely
+    helps, not just any improvement" discipline as the overload -- never
+    as a default, and never preferred over the overload (the overload is
+    an actual documented campus rule; this waiver is not, so it's
+    reached for only once the documented mechanism has already been
+    tried and found insufficient) -- but with TWO tiers of what counts
+    as "genuinely helps", tried most-ambitious first:
+
+      TIER 1 -- reach the policy horizon outright: closes the gap all
+      the way to the standard 5-year timeline, same as before.
+
+      TIER 2 -- only reached if TIER 1 finds no combination that works:
+      save at least one WHOLE year off Phase 1's honest (no-waiver)
+      graduation slot, even if the result still lands beyond the policy
+      horizon. A waiver that turns a 7-year plan into a 6-year plan is a
+      real, meaningful benefit to the student, not just cosmetic --
+      "only worth it if it hits exactly 5 years" was too narrow a bar.
+      A partial-semester improvement, or no improvement at all, still
+      isn't worth the informal accommodation -- this tier's hard cap is
+      Phase 1's graduation slot minus one full year (one year = however
+      many slots semester_types spans), so anything found here is
+      guaranteed to be at least a full year earlier than the honest
+      no-waiver baseline. Skipped entirely if that cap isn't actually
+      looser than the policy horizon already tried in Tier 1 (i.e.
+      Phase 1 was already less than a year over the policy horizon --
+      in that case Tier 2's target would be at least as strict as
+      Tier 1's, which just failed, so there's nothing new to find).
+
+    Within EACH tier, escalation is in order of how few courses it
+    touches and how intrusive the accommodation is:
 
       1. Each candidate in fyp2_waivable_courses tried ALONE (in the
          caller's given order), overload still OFF.
@@ -612,11 +634,13 @@ def build_and_solve(courses, horizon_slots, policy_horizon_slots=None, completed
       3. Each candidate tried ALONE again, this time WITH overload ON.
       4. The full candidate set waived TOGETHER, WITH overload ON.
 
-    The first attempt that reaches the policy horizon under a hard cap
-    (same feasibility-question discipline as the overload phase) wins.
-    If none do, falls back to Phase 1's honest result -- the waiver
-    doesn't help enough to matter, so it's not used, and no explanation
-    is fabricated for a course that wasn't actually the blocker.
+    The first attempt (in tier order, then escalation order within a
+    tier) that satisfies its tier's hard cap wins -- each cap is checked
+    with the same feasibility-question discipline as the overload phase.
+    If nothing in either tier works, falls back to Phase 1's honest
+    result -- the waiver doesn't help enough to matter, so it's not
+    used, and no explanation is fabricated for a course that wasn't
+    actually the blocker.
 
     Every returned result carries "fyp2_prereq_waivers_used": the exact
     list of course codes waived to reach this result (empty unless this
@@ -669,16 +693,29 @@ def build_and_solve(courses, horizon_slots, policy_horizon_slots=None, completed
         if len(fyp2_waivable_courses) > 1:
             candidate_sets.append(set(fyp2_waivable_courses))
 
-        for use_overload in (False, True):
-            for waived in candidate_sets:
-                attempt = _build_and_solve_core(
-                    courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
-                    max_attempts, semester_types, normal_caps_override, verbose,
-                    allow_overload=use_overload, hard_grad_slot_cap=policy_horizon_slots,
-                    fyp2_waived_courses=waived,
-                )
-                if attempt["feasible"]:
-                    return _tag(attempt, waived)
+        # TIER 1: reach the policy horizon outright (unchanged from
+        # before). TIER 2: only added if Tier 1 finds nothing -- save at
+        # least one WHOLE year off Phase 1's honest no-waiver graduation
+        # slot, even short of the policy horizon (e.g. 7-year -> 6-year).
+        # See the docstring above for why each tier's cap is what it is.
+        types_per_year = len(semester_types)
+        one_year_earlier_cap = phase1["graduation_slot"] - types_per_year
+
+        escalation_tiers = [policy_horizon_slots]
+        if one_year_earlier_cap > policy_horizon_slots:
+            escalation_tiers.append(one_year_earlier_cap)
+
+        for tier_cap in escalation_tiers:
+            for use_overload in (False, True):
+                for waived in candidate_sets:
+                    attempt = _build_and_solve_core(
+                        courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
+                        max_attempts, semester_types, normal_caps_override, verbose,
+                        allow_overload=use_overload, hard_grad_slot_cap=tier_cap,
+                        fyp2_waived_courses=waived,
+                    )
+                    if attempt["feasible"]:
+                        return _tag(attempt, waived)
 
     return _tag(phase1)
 

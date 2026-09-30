@@ -5,11 +5,79 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECE Curriculum Advisory Panel</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <style>
+        :root {
+            /* Requested Palette */
+            --app-dark: #6C4C3F;
+            --app-primary: #88614C;
+            --app-secondary: #A07654;
+            --app-accent: #B5895C;
+            --app-light: #A3BFC5;
+            
+            /* Bootstrap Variable Overrides */
+            --bs-primary: var(--app-primary);
+            --bs-dark: var(--app-dark);
+            --bs-secondary: var(--app-secondary);
+            --bs-info: var(--app-light);
+            --bs-warning: var(--app-accent);
+        }
+
+        /* Navbar */
+        .bg-dark { background-color: var(--app-dark) !important; }
+
+        /* Buttons */
+        .btn-primary { background-color: var(--app-primary); border-color: var(--app-primary); color: white; }
+        .btn-primary:hover { background-color: var(--app-dark); border-color: var(--app-dark); color: white; }
+        
+        .btn-secondary { background-color: var(--app-secondary); border-color: var(--app-secondary); color: white; }
+        .btn-secondary:hover { background-color: var(--app-primary); border-color: var(--app-primary); color: white; }
+
+        .btn-outline-secondary { color: var(--app-secondary); border-color: var(--app-secondary); }
+        .btn-outline-secondary:hover { background-color: var(--app-secondary); color: white; }
+
+        .btn-info { background-color: var(--app-light); border-color: var(--app-light); color: var(--app-dark); }
+        .btn-warning { background-color: var(--app-accent); border-color: var(--app-accent); color: white; }
+        
+        .bg-secondary { background-color: var(--app-secondary) !important; }
+        .bg-info { background-color: var(--app-light) !important; color: var(--app-dark) !important; }
+        .bg-warning { background-color: var(--app-accent) !important; color: white !important; }
+
+        .text-primary { color: var(--app-primary) !important; }
+        .text-success { color: var(--app-secondary) !important; } /* Overriding success to fit palette where appropriate */
+
+        /* Tables */
+        .table-dark { background-color: var(--app-dark) !important; color: white; }
+        .table-dark th { background-color: var(--app-dark) !important; color: white; border-color: var(--app-primary); }
+        
+        /* Table Row Hover color from palette */
+        .table-hover tbody tr:hover { background-color: rgba(163, 191, 197, 0.3) !important; }
+
+        /* DataTables Customization */
+        .dataTables_wrapper { padding: 1rem; }
+        .dataTables_wrapper .table { margin-bottom: 0 !important; }
+        
+        .page-item.active .page-link {
+            background-color: var(--app-primary) !important;
+            border-color: var(--app-primary) !important;
+            color: white !important;
+        }
+        .page-link {
+            color: var(--app-primary) !important;
+        }
+        .page-link:hover {
+            color: var(--app-dark) !important;
+            background-color: var(--app-light) !important;
+        }
+    </style>
 </head>
 <body class="bg-light">
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4 shadow-sm">
         <div class="container">
-            <a class="navbar-brand" href="/">🎓 ECE Academic Panel</a>
+            <a class="navbar-brand d-flex align-items-center" href="/">
+                <img src="{{ url_for('static', filename='images/aastu_logo.jpg') }}" alt="AASTU Logo" width="32" height="32" class="me-2 rounded">
+                AASTU ECE Academic Panel
+            </a>
             <div class="navbar-nav me-auto">
                 <a class="nav-item nav-link" href="/">Catalog Matrix</a>
                 {% if session.get('is_admin') %}
@@ -19,7 +87,7 @@
             </div>
             <div class="navbar-nav ms-auto">
                 {% if session.get('is_admin') %}
-                    <span class="navbar-text me-3 text-success">⚙️ Admin Mode active</span>
+                    <span class="navbar-text me-3" style="color: var(--app-accent);">⚙️ Admin Mode active</span>
                     <a class="btn btn-sm btn-outline-danger" href="/logout">Logout</a>
                 {% else %}
                     <a class="btn btn-sm btn-outline-light" href="/login">Admin Login</a>
@@ -27,7 +95,7 @@
             </div>
         </div>
     </nav>
-    <div class="container">
+    <div class="container pb-5">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
@@ -41,6 +109,24 @@
 
         {% block content %}{% endblock %}
     </div>
+
+    <!-- Scripts -->
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script>
+    $(document).ready(function() {
+        $('.table').DataTable({
+            pageLength: 10,
+            lengthMenu: [[10, 25, 50, -1], [10, 25, 50, "All"]],
+            language: {
+                search: "Filter records:"
+            },
+            order: [], // Default no sorting on load to preserve original order
+            stateSave: true // Remember pagination state
+        });
+    });
+    </script>
 </body>
 </html>

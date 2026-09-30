@@ -79,18 +79,19 @@ print("\n=== Part 2: required SGPA (matches worked example) ===")
 # future window (3 semesters) totals credits = [18, 18, 18] = 54
 # goal_cgpa = 3.30 at total credits (60+54=114) -> required_total_points = 376.2
 # needed_points = 376.2 - 186 = 190.2
-# required_sgpa = 190.2 / 54 = 3.5222... -> rounds to 3.52
+# required_sgpa = 190.2 / 54 = 3.5222... -> CEILING at 2dp -> 3.53
+# (ceiling, not nearest rounding: 3.52 * 54 + 186 = 374.08 -> CGPA 3.299 < 3.30)
 result = compute_required_sgpa(60, 3.10, [18, 18, 18], 3.30)
-check("Required SGPA basic case", result == {"feasible": True, "already_secured": False, "required_sgpa": 3.52},
+check("Required SGPA basic case", result == {"feasible": True, "already_secured": False, "required_sgpa": 3.53},
       f"got {result}")
 
-# Sanity: manually re-derive to make sure the formula itself is right,
-# not just internally self-consistent
-prior_points = 3.10 * 60
-total_credits_at_goal = 60 + 54
-required_total_points = 3.30 * total_credits_at_goal
-needed = required_total_points - prior_points
-manual_required = round(needed / 54, 2)
+# Sanity: manually re-derive using integer arithmetic (same as the implementation)
+# needed_cents = 330*114 - 310*60 = 37620 - 18600 = 19020
+# required_hundredths = ceil(19020 / 54) = (19020 + 54 - 1) // 54 = 19073 // 54 = 353
+# required_sgpa = 353 / 100 = 3.53
+manual_needed_cents = 330 * 114 - 310 * 60
+manual_future = 54
+manual_required = (manual_needed_cents + manual_future - 1) // manual_future / 100
 check("Required SGPA matches independent manual derivation", result["required_sgpa"] == manual_required,
       f"solver={result['required_sgpa']} manual={manual_required}")
 
@@ -108,7 +109,7 @@ check("Already-secured case (goal below the worst-case floor)",
 result3 = compute_required_sgpa(60, 2.00, [18], 3.95)
 check("Infeasible case (required > 4.0)", result3["feasible"] is False, f"got {result3}")
 if not result3["feasible"]:
-    check("Infeasible reason mentions the numbers", "4.00" in result3["reason"])
+    check("Infeasible required_sgpa is above 4.0", result3["required_sgpa"] > 4.0, f"got {result3['required_sgpa']}")
 
 print("\n=== Part 3: CGPA projection ===")
 # Same student: prev=60cr @ 3.10, future 3 semesters of 18cr each,
