@@ -13,7 +13,8 @@ The explanation has two parts:
          department's flipped semester),
        - the informal FYP-II prerequisite waiver,
        - the Year-5 credit overload (up to 22 cr),
-       - crowd-relief load balancing.
+       - crowd-relief load balancing (the ONLY place load balancing is
+         ever claimed -- see solve_schedule.CROWD_RELIEF_ELIGIBLE_COURSES).
   2. COURSES MOVED -- per-course "why here?" for every future course NOT
      at its natural (year, semester) slot. On-track courses produce
      nothing, so the output never gets cluttered.
@@ -53,8 +54,13 @@ def _esc(text):
 class ExplainContext:
     """Everything the explainer needs, precomputed once."""
 
-    def __init__(self, schedule, courses, completed, now_slot, normal_caps, waived=()):
+    def __init__(self, schedule, courses, completed, now_slot, normal_caps, waived=(), solver_schedule=None):
         self.schedule = dict(schedule)
+        # Courses crowd relief moved: {code: slot the solver had chosen}.
+        self.relief_from = {}
+        if solver_schedule:
+            self.relief_from = {c: solver_schedule[c] for c, s in self.schedule.items()
+                                if c in solver_schedule and solver_schedule[c] != s}
         self.courses = courses
         self.completed = completed or {}
         self.now_slot = now_slot
@@ -203,14 +209,19 @@ def _blocker(ctx, code, s):
                 continue
             if i2.get("special_requirement") == "ALL_COURSES" or not _is_major_course(i2):
                 continue
-            bound = ctx.schedule[c2] if ctx.natural[c2] == c_nat else ctx.schedule[c2] + 1
+            same = ctx.natural[c2] == c_nat
+            bound = ctx.schedule[c2] if same else ctx.schedule[c2] + 1
             if s < bound:
-                viol.append((ctx.schedule[c2], c2))
+                viol.append((ctx.schedule[c2], c2, same))
         if viol:
-            v_slot, v = max(viol)
-            return {"kind": "gate",
-                    "text": (f"starts only after all your major courses are finished; "
-                             f"the last one is {ctx.name(v)} ({_term(v_slot)})")}
+            v_slot, v, same = max(viol)
+            if same:
+                text = (f"runs in the final semester together with {ctx.name(v)} ({_term(v_slot)}), "
+                        f"so it can't be earlier than that")
+            else:
+                text = (f"starts only after all your stream-period courses are finished; "
+                        f"the last one is {ctx.name(v)} ({_term(v_slot)})")
+            return {"kind": "gate", "text": text}
 
     # NEE style gate: after everything else
     if special == "ALL_COURSES":
@@ -246,6 +257,11 @@ def explain_course_placements(ctx):
             continue
         info = ctx.courses[code]
         nat = ctx.natural[code]
+        if code in ctx.relief_from:
+            out.append({"code": code, "name": info["name"], "slot": slot, "kind": "relief",
+                        "text": (f"load balancing: moved from {_term(ctx.relief_from[code])} to even out "
+                                 f"the number of courses per semester")})
+            continue
         if slot == nat:
             continue
 
@@ -260,8 +276,8 @@ def explain_course_placements(ctx):
                 text = f"taken earlier than normal through {who} offering"
                 kind = "flip"
             else:
-                text = "placed earlier than normal to keep your semester loads balanced"
-                kind = "balance"
+                text = "taken ahead of its normal semester; nothing required this, an earlier semester simply had room"
+                kind = "early"
             out.append({"code": code, "name": info["name"], "slot": slot, "kind": kind, "text": text})
             continue
 
@@ -283,8 +299,8 @@ def explain_course_placements(ctx):
             if b:
                 text, kind = b["text"], b["kind"]
             else:
-                text = "placed here to keep your load balanced"
-                kind = "balance"
+                text = "no rule forced this; the planner's tie-break preferences placed it here"
+                kind = "tiebreak"
 
         if prefix:
             text = prefix.rstrip(": ") + (" — " if candidates else ": ") + text
@@ -316,7 +332,7 @@ def collect_leverages(ctx, entries, waivers):
     for s, load, normal in ctx.overloaded_slots:
         out["overloads"].append({"slot": s, "load": load, "normal": normal})
 
-    out["balanced"] = [e for e in entries if e["kind"] == "balance" and e["slot"] < ctx.natural[e["code"]]]
+    out["balanced"] = [e for e in entries if e["kind"] == "relief"]
     return out
 
 
@@ -356,7 +372,7 @@ def _format_leverages(lev):
         lines += ["", "⚖️ <b>Load balancing</b>"]
         for e in lev["balanced"]:
             lines.append(f"• <b>{_esc(e['name'])}</b> → <u>{_term(e['slot'])}</u> "
-                         f"<i>(moved earlier to even out your semester loads)</i>")
+                         f"<i>({_esc(e['text'])})</i>")
     return lines
 
 
@@ -379,7 +395,8 @@ def build_explanation_message(result):
         return "ℹ️ There's no plan to explain yet."
 
     ctx = ExplainContext(ec["schedule"], ec["courses"], ec["completed"],
-                          ec["now_slot"], ec["normal_caps"], ec.get("waived", ()))
+                          ec["now_slot"], ec["normal_caps"], ec.get("waived", ()),
+                          ec.get("solver_schedule"))
     entries = explain_course_placements(ctx)
     lev = collect_leverages(ctx, entries, result.get("fyp2_prereq_waivers"))
 
@@ -390,7 +407,7 @@ def build_explanation_message(result):
                                    "No courses were moved and no special rules were needed."])
 
     # Balance-only entries are already shown under "Load balancing".
-    moved = [e for e in entries if not (e["kind"] == "balance" and e["slot"] < ctx.natural[e["code"]])]
+    moved = [e for e in entries if e["kind"] != "relief"]
 
     lev_lines = _format_leverages(lev) if _has_any(lev) else []
     limit = len(moved)

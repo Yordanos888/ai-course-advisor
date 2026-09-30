@@ -129,6 +129,8 @@ def format_schedule_result(result, header="🎯 <b>Your Course Plan</b>", infeas
         lines.append(_format_term_block(year, sem, result["plan_by_term"][(year, sem)]))
         lines.append("")
     lines.extend(_format_warnings(result.get("warnings")))
+    lines.append("")
+    lines.append("<i>The generated course plan might not always be correct and should be verified with the department registrar.</i>")
     return "\n".join(lines).rstrip()
 
 

@@ -294,24 +294,30 @@ async def semester_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def semester_receive_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text not in ("1", "2", "3", "4", "5"):
-        await update.message.reply_text("❌ Please send a single number from 1 to 5.")
+    
+    parts = [p.strip() for p in text.replace(',', ' ').split() if p.strip()]
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        await update.message.reply_text("❌ Please send the year and semester separated by a comma or space, e.g. '4, 2'.")
         return SEMESTER_AWAITING_YEAR
-    context.user_data["_sem_year"] = text
-    await update.message.reply_text(
-        "Which semester? Send a number (1, 2, or 3)."
-    )
-    return SEMESTER_AWAITING_SEM
 
-async def semester_receive_sem(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text not in ("1", "2", "3"):
-        await update.message.reply_text("❌ Please send 1, 2, or 3.")
-        return SEMESTER_AWAITING_SEM
-    context.user_data["_sem_sem"] = text
-    year = int(context.user_data["_sem_year"])
-    sem = int(text)
-    # Stream is only relevant at or after 4Y2S
+    year_str, sem_str = parts[0], parts[1]
+    if year_str not in ("1", "2", "3", "4", "5"):
+        await update.message.reply_text("❌ Year must be from 1 to 5.")
+        return SEMESTER_AWAITING_YEAR
+    if sem_str not in ("1", "2", "3"):
+        await update.message.reply_text("❌ Semester must be 1, 2, or 3.")
+        return SEMESTER_AWAITING_YEAR
+        
+    year = int(year_str)
+    sem = int(sem_str)
+    
+    if sem == 3 and year != 4:
+        await update.message.reply_text("❌ Year {} doesn't have a semester 3. Only Year 4 has a 3rd term.".format(year))
+        return SEMESTER_AWAITING_YEAR
+
+    context.user_data["_sem_year"] = year_str
+    context.user_data["_sem_sem"] = sem_str
+
     if year > 4 or (year == 4 and sem >= 2):
         await update.message.reply_text(
             "Which stream? (Computer, Communication, Control, Power)\n"
@@ -319,12 +325,14 @@ async def semester_receive_sem(update: Update, context: ContextTypes.DEFAULT_TYP
             parse_mode=ParseMode.HTML,
         )
         return SEMESTER_AWAITING_STREAM
-    # Pre-stream years — run immediately with no stream filter
+    # Pre-stream years - run immediately with no stream filter
     response = get_semester_courses_formatted(str(year), str(sem), None)
     await update.message.reply_text(response, parse_mode=ParseMode.HTML)
     context.user_data.pop("_sem_year", None)
     context.user_data.pop("_sem_sem", None)
     return ConversationHandler.END
+
+
 
 async def semester_receive_stream(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -345,8 +353,7 @@ semester_conv_handler = ConversationHandler(
     entry_points=[CommandHandler("semester", semester_command)],
     states={
         SEMESTER_AWAITING_YEAR:   [MessageHandler(filters.TEXT & ~filters.COMMAND, semester_receive_year)],
-        SEMESTER_AWAITING_SEM:    [MessageHandler(filters.TEXT & ~filters.COMMAND, semester_receive_sem)],
-        SEMESTER_AWAITING_STREAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, semester_receive_stream)],
+                SEMESTER_AWAITING_STREAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, semester_receive_stream)],
     },
     fallbacks=[CommandHandler("cancel", semester_cancel)],
 )
@@ -376,31 +383,35 @@ async def start_course_planning(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text(
         "Let's build your recovery plan. \n\n"
-        "What is your academic year currently? Type only the number [1, 2, 3, 4, 5]."
+        "What is your CURRENT academic year and semester? Reply with both together, e.g. '3, 1'."
     )
     return AWAITING_YEAR
 
 async def handle_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text not in ['1', '2', '3', '4', '5']:
-        await update.message.reply_text("❌ Please type only a single number from 1 to 5.")
+    
+    parts = [p.strip() for p in text.replace(',', ' ').split() if p.strip()]
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        await update.message.reply_text("❌ Please send the year and semester separated by a comma or space, e.g. '3, 1'.")
         return AWAITING_YEAR
 
-    context.user_data['year'] = int(text)
-    await update.message.reply_text(
-        "What is your academic semester currently? Type only the number [1, 2, 3]."
-    )
-    return AWAITING_SEMESTER
+    year_str, sem_str = parts[0], parts[1]
+    if year_str not in ("1", "2", "3", "4", "5"):
+        await update.message.reply_text("❌ Year must be from 1 to 5.")
+        return AWAITING_YEAR
+    if sem_str not in ("1", "2", "3"):
+        await update.message.reply_text("❌ Semester must be 1, 2, or 3.")
+        return AWAITING_YEAR
+        
+    year = int(year_str)
+    sem = int(sem_str)
+    
+    if sem == 3 and year != 4:
+        await update.message.reply_text("❌ Year {} doesn't have a semester 3. Only Year 4 has a 3rd term.".format(year))
+        return AWAITING_YEAR
 
-async def handle_semester(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text not in ['1', '2', '3']:
-        await update.message.reply_text("❌ Please type only a single number from 1 to 3.")
-        return AWAITING_SEMESTER
-
-    sem = int(text)
+    context.user_data['year'] = year
     context.user_data['semester'] = sem
-    year = context.user_data['year']
 
     # Conditional Stream Check: If at or past Year 4 Semester 2, ask for stream.
     if year > 4 or (year == 4 and sem >= 2):
@@ -874,8 +885,7 @@ def main():
         entry_points=[CommandHandler("course_planning", start_course_planning)],
         states={
             AWAITING_YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_year)],
-            AWAITING_SEMESTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_semester)],
-            AWAITING_STREAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stream)],
+                        AWAITING_STREAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stream)],
             AWAITING_FAILED: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_failed_courses)],
             AWAITING_ADDED: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_added_courses)],
             AWAITING_DROPPED: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_dropped_courses)],

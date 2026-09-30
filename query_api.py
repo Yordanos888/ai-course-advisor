@@ -34,13 +34,22 @@ def _stream_scope_is_relevant(course):
     return course.year_level > 4 or (course.year_level == 4 and course.semester_offered >= 2)
 
 def search_course_by_name(session, query_text):
-    """Fuzzy course lookup by name using difflib for spelling tolerance."""
+    """Fuzzy course lookup by name using difflib for spelling tolerance, and abbreviation support."""
     query_lower = query_text.lower().strip()
     all_courses = session.query(Course).all()
     
     scored = []
     for c in all_courses:
         name_lower = c.name.lower()
+        
+        # Abbreviation matching (e.g. "mcs" for "Modern Control Systems")
+        words = name_lower.replace('-', ' ').split()
+        abbreviation = "".join([w[0] for w in words if w])
+        
+        if query_lower == abbreviation and len(query_lower) >= 2:
+            scored.append((1.0, c))
+            continue
+
         # Calculate sequence similarity ratio (0.0 to 1.0)
         ratio = difflib.SequenceMatcher(None, query_lower, name_lower).ratio()
         
@@ -139,10 +148,11 @@ def get_course_details_formatted(query_str: str) -> str:
             f"• <b>Department Scope:</b> {dept_name}",
         ]
 
-        if scope is None:
-            lines.append("🌐 <b>Common to ALL streams</b> — every student takes this course regardless of stream.")
-        else:
-            lines.append(f"• <b>Stream Scope:</b> {_stream_scope_label(session, course)}")
+        if _stream_scope_is_relevant(course):
+            if scope is None:
+                lines.append("🌿 <b>Common to ALL streams</b> — every student takes this course regardless of stream.")
+            else:
+                lines.append(f"🔌 <b>Stream Scope:</b> {_stream_scope_label(session, course)}")
 
         shared = session.query(CommonCourse).filter_by(course_id=course.id).all()
         if shared:

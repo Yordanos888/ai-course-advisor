@@ -243,9 +243,9 @@ def filter_courses_for_student(all_courses, student_stream):
     return result
 
 
-def valid_future_slots_for_course(course, horizon_slots, now_slot, semester_types=(1, 2, 3)):
+def valid_future_slots_for_course(course, horizon_slots, now_slot, semester_types=(1, 2, 3), allow_parity_flips=False):
     allowed_parities = {course["semester_offered"]}
-    if course.get("alt_parity"):
+    if allow_parity_flips and course.get("alt_parity"):
         allowed_parities.add(course["alt_parity"])
     return [
         s for s in range(now_slot + 1, horizon_slots + 1)
@@ -262,7 +262,8 @@ def earliest_slot_at_or_after(min_slot, allowed_parities, horizon_slots, semeste
 
 def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
                             max_attempts, semester_types, normal_caps_override, verbose,
-                            allow_overload, hard_grad_slot_cap=None, fyp2_waived_courses=None):
+                            allow_overload, hard_grad_slot_cap=None, fyp2_waived_courses=None,
+                            allow_parity_flips=False):
     """
     The actual model-building/solving logic, parameterized by:
 
@@ -285,6 +286,11 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
         of the permanent is_major exclusion. See build_and_solve()'s
         FYP2_PREREQ_WAIVER escalation for what this represents and why
         it's applied only as a last resort, never by default.
+        
+    allow_parity_flips: if True, courses can be scheduled in their
+        alt_parity slot (if they have one). Only turned on by the caller
+        if it's mathematically proven to save at least one FULL year off
+        the honest graduation timeline.
     """
     completed_courses = completed_courses or {}
     fyp2_waived_courses = fyp2_waived_courses or set()
@@ -308,7 +314,7 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
             slot_of[c] = model.NewConstant(summary["passed_slot"])
             continue
         decided_codes.append(c)
-        valid_slots[c] = valid_future_slots_for_course(courses[c], horizon_slots, now_slot, semester_types)
+        valid_slots[c] = valid_future_slots_for_course(courses[c], horizon_slots, now_slot, semester_types, allow_parity_flips)
         if not valid_slots[c]:
             raise ValueError(f"{c} has no legal future slot left before horizon ends")
         for s in valid_slots[c]:
@@ -450,13 +456,14 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
     # two-phase logic, kept as its own tier right after grad_slot
     # (this part was already confirmed working correctly).
     flip_terms = []
-    for c in decided_codes:
-        alt = courses[c].get("alt_parity")
-        if alt:
-            flip_terms.append(sum(
-                assign[c, s] for s in valid_slots[c]
-                if slot_to_year_sem(s, semester_types)[1] == alt
-            ))
+    if allow_parity_flips:
+        for c in decided_codes:
+            alt = courses[c].get("alt_parity")
+            if alt:
+                flip_terms.append(sum(
+                    assign[c, s] for s in valid_slots[c]
+                    if slot_to_year_sem(s, semester_types)[1] == alt
+                ))
     flip_count = sum(flip_terms) if flip_terms else 0
     max_flip_count = max(len(flip_terms), 1)
 
@@ -499,20 +506,34 @@ def _build_and_solve_core(courses, horizon_slots, policy_horizon_slots, complete
     max_possible_tie_break = max_index * horizon_slots * max(len(main_codes), 1)
 
     # Lexicographic weighting, outer tier dominates every inner one:
-    # grad_slot > (flip+overload) > non_droppable_dev > general_dev > retake_dev > tie_break
+    # grad_slot > overload > non_droppable_dev > general_dev > retake_dev > flip > tie_break
+    #
+    # FLIP TIER PLACEMENT (changed): flip-avoidance now ranks BELOW every
+    # natural-slot-adherence tier, exactly as fix #6's description says
+    # ("only used when it genuinely improves the plan -- graduation time OR
+    # natural-slot adherence"). It used to sit right after grad_slot, which
+    # made the solver refuse a cross-department flip whenever it didn't
+    # shorten graduation -- even when the flip kept a whole prerequisite
+    # chain at its natural semesters (observed: a Computer-stream student
+    # failing Signals and System Analysis was pushed to Year 4 Sem 1,
+    # delaying Intro to Communication Systems, DCCN, IDP and more, instead
+    # of retaking it in Year 3 Sem 2 through EME). The flip is still never
+    # used for nothing: among otherwise-equal plans, no-flip wins.
     w_tie = 1
-    w_retake_dev = (max_possible_tie_break + 1) * w_tie
+    w_flip = (max_possible_tie_break + 1) * w_tie
+    w_retake_dev = (max_flip_count + 1) * w_flip
     w_general_dev = (max_retake_dev + 1) * w_retake_dev
     w_non_droppable_dev = (max_general_dev + 1) * w_general_dev
     w_privilege = (max_non_droppable_dev + 1) * w_non_droppable_dev
-    w_grad = (max_flip_count + max_overload_term + 1) * w_privilege
+    w_grad = (max_overload_term + 1) * w_privilege
 
     model.Minimize(
         grad_slot * w_grad
-        + (flip_count + overload_term) * w_privilege
+        + overload_term * w_privilege
         + non_droppable_dev_sum * w_non_droppable_dev
         + general_dev_sum * w_general_dev
         + retake_dev_sum * w_retake_dev
+        + flip_count * w_flip
         + tie_break_term * w_tie
     )
 
@@ -659,63 +680,87 @@ def build_and_solve(courses, horizon_slots, policy_horizon_slots=None, completed
     phase1 = _build_and_solve_core(
         courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
         max_attempts, semester_types, normal_caps_override, verbose,
-        allow_overload=False,
+        allow_overload=False, allow_parity_flips=False,
     )
 
-    # Phase 1 infeasible does NOT mean "no plan exists" -- without the
-    # overload, a plan may simply need more room than horizon_slots
-    # allows, while WITH the overload it could fit (possibly even within
-    # the policy horizon). Non-time failures (e.g. retake limit) are
-    # returned as-is, since more credits per term can't fix those.
+    types_per_year = len(semester_types)
+
+    # If Phase 1 is infeasible due to running out of horizon space, it might
+    # simply need privileges to fit. Any plan that fits within the horizon when
+    # the baseline couldn't is effectively saving infinite/many slots, so all
+    # non-waiver privileges are valid to try here.
     if not phase1["feasible"]:
         if phase1.get("status") not in ("INFEASIBLE", "CAPSTONE_UNSCHEDULABLE"):
             return _tag(phase1)
-        phase2_rescue = _build_and_solve_core(
-            courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
-            max_attempts, semester_types, normal_caps_override, verbose,
-            allow_overload=True,
-        )
-        return _tag(phase2_rescue) if phase2_rescue["feasible"] else _tag(phase1)
-
-    if phase1["graduation_slot"] <= policy_horizon_slots:
+        for use_overload, use_flips in [(True, False), (False, True), (True, True)]:
+            rescue = _build_and_solve_core(
+                courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
+                max_attempts, semester_types, normal_caps_override, verbose,
+                allow_overload=use_overload, allow_parity_flips=use_flips,
+            )
+            if rescue["feasible"]:
+                return _tag(rescue)
         return _tag(phase1)
 
-    phase2 = _build_and_solve_core(
-        courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
-        max_attempts, semester_types, normal_caps_override, verbose,
-        allow_overload=True, hard_grad_slot_cap=policy_horizon_slots,
-    )
-    if phase2["feasible"]:
-        return _tag(phase2)
+    # We have a baseline honest graduation slot.
+    g_base = phase1["graduation_slot"]
+    
+    # Identify which targets we should try to hit.
+    # 1. If late, we want to hit the policy horizon.
+    # 2. Regardless of being late or on-time, we want to see if we can save
+    #    a full year (g_base - types_per_year).
+    one_year_earlier = g_base - types_per_year
+    targets = []
+    
+    if g_base > policy_horizon_slots:
+        targets.append({"cap": policy_horizon_slots, "is_policy_rescue": True})
+        
+    if one_year_earlier > 0:
+        # Don't add the 1-year target if it's the exact same as the policy target we just added
+        if not targets or targets[0]["cap"] != one_year_earlier:
+            targets.append({"cap": one_year_earlier, "is_policy_rescue": False})
 
+    candidate_sets = []
     if fyp2_waivable_courses:
         candidate_sets = [{c} for c in fyp2_waivable_courses]
         if len(fyp2_waivable_courses) > 1:
             candidate_sets.append(set(fyp2_waivable_courses))
 
-        # TIER 1: reach the policy horizon outright (unchanged from
-        # before). TIER 2: only added if Tier 1 finds nothing -- save at
-        # least one WHOLE year off Phase 1's honest no-waiver graduation
-        # slot, even short of the policy horizon (e.g. 7-year -> 6-year).
-        # See the docstring above for why each tier's cap is what it is.
-        types_per_year = len(semester_types)
-        one_year_earlier_cap = phase1["graduation_slot"] - types_per_year
+    for target in targets:
+        cap = target["cap"]
+        is_policy_rescue = target["is_policy_rescue"]
+        can_use_flips = (cap <= one_year_earlier)
+        
+        # If we are already on time, we are NOT allowed to use Overload or Waivers
+        # just to graduate even earlier. Those are strict accommodations.
+        # But we ARE allowed to use Flips to graduate a year earlier (per user rule).
+        allow_accommodations = (g_base > policy_horizon_slots)
 
-        escalation_tiers = [policy_horizon_slots]
-        if one_year_earlier_cap > policy_horizon_slots:
-            escalation_tiers.append(one_year_earlier_cap)
+        configs = []
+        if allow_accommodations:
+            configs.append((True, False, None)) # Overload only
+        if can_use_flips:
+            configs.append((False, True, None)) # Flips only
+        if allow_accommodations and can_use_flips:
+            configs.append((True, True, None))  # Overload + Flips
+            
+        if allow_accommodations:
+            for waived in candidate_sets:
+                configs.append((False, False, waived))
+                configs.append((True, False, waived))
+                if can_use_flips:
+                    configs.append((False, True, waived))
+                    configs.append((True, True, waived))
 
-        for tier_cap in escalation_tiers:
-            for use_overload in (False, True):
-                for waived in candidate_sets:
-                    attempt = _build_and_solve_core(
-                        courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
-                        max_attempts, semester_types, normal_caps_override, verbose,
-                        allow_overload=use_overload, hard_grad_slot_cap=tier_cap,
-                        fyp2_waived_courses=waived,
-                    )
-                    if attempt["feasible"]:
-                        return _tag(attempt, waived)
+        for use_overload, use_flips, waived in configs:
+            attempt = _build_and_solve_core(
+                courses, horizon_slots, policy_horizon_slots, completed_courses, now_slot,
+                max_attempts, semester_types, normal_caps_override, verbose,
+                allow_overload=use_overload, allow_parity_flips=use_flips,
+                hard_grad_slot_cap=cap, fyp2_waived_courses=waived,
+            )
+            if attempt["feasible"]:
+                return _tag(attempt, waived or ())
 
     return _tag(phase1)
 

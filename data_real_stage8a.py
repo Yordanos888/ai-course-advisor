@@ -109,13 +109,16 @@ def load_real_courses(csv_path=CSV_PATH, include_deferred=False):
             "streams": _parse_streams(r["Stream Scope"]),
             "prereqs": _parse_prereqs_simple(r["Prerequisites (Split by commas)"]),
             "is_droppable": r["Is Droppable"].strip().upper() == "TRUE",
-            # True once genuinely part of the ECE department curriculum,
-            # False for the university-wide pre-department-enrollment
-            # courses (Year 1, and Year 2 Sem 1's "pre-Engineering common"
-            # term) -- see db_loader.py's matching field for the full
-            # rationale (Department Scope was tried and rejected: it
-            # tracks administering entity, not major-curriculum status).
-            "is_major": not (year_level == 1 or (year_level == 2 and semester_offered == 1)),
+            # True only for courses whose NATURAL slot is at or after Year 4
+            # Semester 2 -- the start of the stream period (when stream
+            # enrollment happens). These are the "stream major courses"
+            # that Final Year Project II requires to be finished first.
+            # Earlier courses (including Year 2-4 ECE courses such as
+            # Digital Signal Processing, natural slot Year 3 Sem 2) are NOT
+            # FYP-II prerequisites, even when a retake pushes them late.
+            # (Previously this was "not Year 1 / Year 2 Sem 1", which wrongly
+            # made every department course a FYP-II peer.)
+            "is_major": year_level > 4 or (year_level == 4 and semester_offered >= 2),
         }
 
     return courses, skipped

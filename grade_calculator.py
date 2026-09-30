@@ -305,67 +305,51 @@ def compute_required_sgpa(prev_total_credits, current_cgpa, future_credits_by_se
         per semester in the future window (current semester through the
         goal semester, inclusive).
 
-    The "minimum" SGPA is the SAME value applied evenly across every
-    future semester -- spreading the needed grade points out evenly is
-    exactly what minimizes the peak SGPA required in any single term
-    (any uneven split would require a higher SGPA in at least one term
-    to make up for a lower one elsewhere).
+    Returns the minimum, evenly-balanced SGPA needed each remaining
+    semester to hit a goal CGPA.
 
     Returns one of:
         {"feasible": True, "already_secured": True, "required_sgpa": 0.0}
-            -- goal is already mathematically guaranteed (required <= 0)
         {"feasible": False, "required_sgpa": float}
-            -- required SGPA would exceed 4.00, i.e. impossible. The
-            value is still returned (ceiling-rounded) so the caller can
-            report exactly how far past 4.00 it would need to go; NO
-            sentence is composed here, since whether it reads "in that
-            semester" or "across your remaining semesters" depends on
-            how many future semesters there are -- something only the
-            caller (gpa_bot.py) knows. Composing the full message here
-            would either hardcode a plural that reads wrong for a
-            single-semester window, or require this pure-math module to
-            take on UI phrasing.
         {"feasible": True, "already_secured": False, "required_sgpa": float}
-            -- the normal case
 
-    PRECISION: uses pure integer arithmetic to eliminate floating-point
-    errors entirely. Since current_cgpa and goal_cgpa are always 2-decimal-
-    place values (the system enforces this), we convert them to integer
-    "cents" (multiply by 100), perform all operations in integer space,
-    and use integer ceiling division -- (a + b - 1) // b -- which is
-    exact by definition. This prevents the class of bugs where a
-    mathematically-exact required SGPA of, say, 3.79 is represented as
-    3.7900000001 in float, causing a spurious ceiling step to 3.80.
+    PRECISION: we simulate EXACTLY the same math compute_cgpa_projection
+    uses, checking every possible SGPA from 0.00 to 4.00+ in 0.01 increments.
+    This guarantees 100% consistency with the displayed projection, avoiding
+    analytical boundary bugs caused by float rounding.
     """
     total_future_credits = sum(future_credits_by_semester)
     if total_future_credits <= 0:
         raise ValueError("Total future credit hours must be greater than zero.")
 
-    # Convert 2-decimal CGPA floats to integer cents to enable exact arithmetic.
-    curr_cents = round(current_cgpa * 100)
-    goal_cents = round(goal_cgpa * 100)
     total_credits = prev_total_credits + total_future_credits
+    prev_points = current_cgpa * prev_total_credits
 
-    # needed_points = goal * total_credits - curr * prev_total_credits
-    # Multiplied by 100 to stay in integer space:
-    needed_cents = goal_cents * total_credits - curr_cents * prev_total_credits
-
-    if needed_cents <= 0:
+    # Fast check for already secured
+    if round(prev_points / total_credits, 2) >= goal_cgpa:
         return {"feasible": True, "already_secured": True, "required_sgpa": 0.0}
 
-    # required_sgpa = needed_cents / (total_future_credits * 100)
-    # Ceiling at 2 decimals = ceil(needed_cents / total_future_credits) / 100
-    # Integer ceiling: (a + b - 1) // b  (exact, no float division needed)
-    required_hundredths = (needed_cents + total_future_credits - 1) // total_future_credits
+    # Simulate running the exact projection math for SGPAs from 0.01 up to 10.00
+    # (Checking well beyond 4.00 so we can report exactly how much it overshoots if infeasible)
+    for h in range(1, 10000):
+        sgpa = h / 100.0
+        # Simulating compute_cgpa_projection exactly:
+        running_pts = prev_points
+        running_cr = prev_total_credits
+        for credits in future_credits_by_semester:
+            running_pts += sgpa * credits
+            running_cr += credits
+        
+        cgpa = round(running_pts / running_cr, 2)
+        if cgpa >= goal_cgpa:
+            return {
+                "feasible": h <= 400,
+                "already_secured": False,
+                "required_sgpa": sgpa,
+            }
 
-    if required_hundredths > 400:
-        return {"feasible": False, "required_sgpa": required_hundredths / 100}
-
-    return {
-        "feasible": True,
-        "already_secured": False,
-        "required_sgpa": min(required_hundredths / 100, 4.0),
-    }
+    # Fallback if somehow 100.00 SGPA isn't enough (mathematically extremely unlikely)
+    return {"feasible": False, "required_sgpa": 99.99}
 
 
 # ---------------------------------------------------------------------

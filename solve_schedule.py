@@ -563,6 +563,8 @@ def solve_schedule_for_student(session, current_year, current_sem, stream_short_
     # has to know it exists (it accesses only plan_by_term, graduation, etc.).
     explain_context = {
         "schedule": schedule,            # crowd-relief-applied {code: slot}
+        "solver_schedule": result["schedule"],   # BEFORE crowd relief, so the explainer can tell
+                                                 # solver placements from relief moves
         "courses": resolved,             # {code: info} with prereqs, credits…
         "completed": completed,          # {code: [{status, slot}]}
         "now_slot": now_slot,

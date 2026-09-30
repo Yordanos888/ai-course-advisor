@@ -87,19 +87,16 @@ def load_raw_courses_from_db(session):
             "is_droppable": c.is_droppable,
             "special_requirement": c.special_requirement,
             "raw_prereq_edges": prereq_edges_by_course.get(c.id, []),
-            # True once the course is genuinely part of the ECE
-            # department's own curriculum, False for the university-wide
-            # courses taken BEFORE department enrollment. Per the campus
-            # doc: Year 1 (both semesters) is the shared "Freshman year"
-            # for the whole university, and Year 2 Semester 1 is the
-            # shared "pre-Engineering" term before a department is even
-            # chosen -- a student hasn't joined ECE yet at that point, so
-            # nothing there is "ECE major" work. Department_id/"Department
-            # Scope" was tried first and rejected: it tracks who
-            # *administers* a course (e.g. Industry Internship is tagged
-            # "Common" because it's coordinated centrally, despite being
-            # a core ECE requirement), not whether it's part of the major.
-            "is_major": not (c.year_level == 1 or (c.year_level == 2 and c.semester_offered == 1)),
+            # True only for courses whose NATURAL slot is at or after Year 4
+            # Semester 2 -- the start of the stream period (when stream
+            # enrollment happens). These are the "stream major courses"
+            # that Final Year Project II requires to be finished first.
+            # Earlier courses (including Year 2-4 ECE courses such as
+            # Digital Signal Processing, natural slot Year 3 Sem 2) are NOT
+            # FYP-II prerequisites, even when a retake pushes them late.
+            # (Previously this was "not Year 1 / Year 2 Sem 1", which wrongly
+            # made every department course a FYP-II peer.)
+            "is_major": c.year_level > 4 or (c.year_level == 4 and c.semester_offered >= 2),
         }
     return courses
 

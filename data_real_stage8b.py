@@ -158,12 +158,16 @@ def load_real_courses_full(csv_path=None):
             "department_scope": dept_scope,
             "streams": _parse_streams(r["Stream Scope"]),
             "is_droppable": r["Is Droppable"].strip().upper() == "TRUE",
-            # True once genuinely part of the ECE department curriculum,
-            # False for the university-wide pre-department-enrollment
-            # courses -- see db_loader.py's matching field for the full
-            # rationale. (All 3 deferred rows here are Year 4-5, so this
-            # is always True for them; the field is set for consistency.)
-            "is_major": not (year_level == 1 or (year_level == 2 and semester_offered == 1)),
+            # True only for courses whose NATURAL slot is at or after Year 4
+            # Semester 2 -- the start of the stream period (when stream
+            # enrollment happens). These are the "stream major courses"
+            # that Final Year Project II requires to be finished first.
+            # Earlier courses (including Year 2-4 ECE courses such as
+            # Digital Signal Processing, natural slot Year 3 Sem 2) are NOT
+            # FYP-II prerequisites, even when a retake pushes them late.
+            # (Previously this was "not Year 1 / Year 2 Sem 1", which wrongly
+            # made every department course a FYP-II peer.)
+            "is_major": year_level > 4 or (year_level == 4 and semester_offered >= 2),
             **special_fields[code],
         }
 
