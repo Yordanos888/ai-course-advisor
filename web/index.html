@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ECE Academic Advisor · AASTU</title>
+<link rel="icon" href="img/aastu_logo.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="#home">
+    <img src="img/aastu_logo.jpg" alt="AASTU">
+    <span><b>ECE Advisor</b><small>Addis Ababa Science &amp; Technology University</small></span>
+  </a>
+  <nav id="nav">
+    <a href="#home" data-route="home">Home</a>
+    <a href="#planner" data-route="planner">Course Planner</a>
+    <a href="#courses" data-route="courses">Curriculum</a>
+    <a href="#gpa" data-route="gpa">GPA Tools</a>
+    <a href="#feedback" data-route="feedback">Feedback</a>
+  </nav>
+  <div id="account"></div>
+</header>
+
+<main>
+<!-- ============ HOME ============ -->
+<section class="view" id="view-home">
+  <div class="hero">
+    <div class="hero-text">
+      <span class="pill">Electrical &amp; Computer Engineering</span>
+      <h1>Plan your degree.<br><em>Stay on track.</em></h1>
+      <p>Build a personalised multi-semester plan after a failed course, explore the curriculum and its prerequisites, and plan your CGPA &mdash; all in one place, powered by the same engine as our Telegram bot.</p>
+      <div class="hero-cta">
+        <a class="btn primary lg" href="#planner">Build my course plan</a>
+        <a class="btn ghost lg" href="#courses">Explore curriculum</a>
+      </div>
+    </div>
+    <div class="hero-art" aria-hidden="true">
+      <div class="orb o1"></div><div class="orb o2"></div>
+      <div class="floatcard c1"><span>Year 4 · Sem 1</span><b>Signals &amp; Systems</b><i>3 cr</i></div>
+      <div class="floatcard c2"><span>Expected graduation</span><b>Year 5 · Sem 2</b><i>🎓 on time</i></div>
+      <div class="floatcard c3"><span>Required SGPA</span><b>3.42</b><i>to reach 3.50 CGPA</i></div>
+    </div>
+  </div>
+
+  <div class="features">
+    <a class="feature" href="#planner"><div class="ico">🗓️</div><h3>Course Planner</h3><p>Failed, dropped, or ahead of schedule? Get an optimal term-by-term recovery plan and see <em>why</em> it looks that way.</p></a>
+    <a class="feature" href="#courses"><div class="ico">📚</div><h3>Curriculum Explorer</h3><p>Browse every course by year and semester, with prerequisites, dependants and downstream impact one click away.</p></a>
+    <a class="feature" href="#gpa"><div class="ico">📊</div><h3>GPA Tools</h3><p>Calculate your SGPA, find the SGPA you need for a goal CGPA, or project your CGPA with what-ifs.</p></a>
+  </div>
+</section>
+
+<!-- ============ PLANNER ============ -->
+<section class="view" id="view-planner">
+  <div class="page-head"><h2>Course Planner</h2><p>Tell us where you are and what happened — we'll compute the best path to graduation.</p></div>
+  <div class="gate" id="planner-gate"></div>
+  <div class="split" id="planner-body">
+    <form class="card wizard" id="plan-form" autocomplete="off">
+      <div class="step">
+        <h4><span class="num">1</span> Where are you now?</h4>
+        <label class="lbl">Academic year</label>
+        <div class="seg" id="pl-year"></div>
+        <label class="lbl">Semester</label>
+        <div class="seg" id="pl-sem"></div>
+      </div>
+      <div class="step" id="pl-stream-step" hidden>
+        <h4><span class="num">2</span> Your stream</h4>
+        <div class="seg wrap" id="pl-stream"></div>
+        <p class="hint">Not decided? Choose “Compare all” to see every stream side-by-side.</p>
+      </div>
+      <div class="step">
+        <h4><span class="num">3</span> Your course history <small>(optional)</small></h4>
+        <label class="lbl">Courses you <b>failed</b></label>
+        <div class="picker" data-key="failed"></div>
+        <label class="lbl">Courses taken <b>ahead of schedule</b> <small>(passed, from a later semester)</small></label>
+        <div class="picker" data-key="added"></div>
+        <label class="lbl">Courses you <b>dropped</b> <small>(still need to take)</small></label>
+        <div class="picker" data-key="dropped"></div>
+      </div>
+      <button class="btn primary lg block" id="plan-go" type="submit">Generate my plan</button>
+    </form>
+    <div class="results" id="plan-results">
+      <div class="empty"><div class="big">🎯</div><h3>Your plan will appear here</h3><p>Fill in the form and hit <b>Generate</b>. Everything is computed instantly.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CURRICULUM ============ -->
+<section class="view" id="view-courses">
+  <div class="page-head"><h2>Curriculum Explorer</h2><p>Every course, organised by year and semester. Click any course for details.</p></div>
+  <div class="toolbar card">
+    <input id="c-search" type="search" placeholder="Search by name or code…">
+    <select id="c-year"><option value="">All years</option></select>
+    <select id="c-stream"><option value="">All streams</option></select>
+    <div class="tabs mini" id="c-mode">
+      <button class="on" data-m="all">All courses</button>
+      <button data-m="dept">Cross-department</button>
+      <button data-m="stream">Cross-stream</button>
+    </div>
+  </div>
+  <div id="c-list"></div>
+</section>
+
+<!-- ============ GPA ============ -->
+<section class="view" id="view-gpa">
+  <div class="page-head"><h2>GPA Tools</h2><p>AASTU grade scale, two-decimal precision, same maths as the bot.</p></div>
+  <div class="tabs" id="g-tabs">
+    <button class="on" data-t="sgpa">SGPA calculator</button>
+    <button data-t="goal">Goal: required SGPA</button>
+    <button data-t="whatif">What-if CGPA</button>
+  </div>
+  <div class="split gpa">
+    <div class="card" id="g-form"></div>
+    <div id="g-result"><div class="empty"><div class="big">🧮</div><h3>Results show up here</h3></div></div>
+  </div>
+</section>
+
+<!-- ============ FEEDBACK ============ -->
+<section class="view" id="view-feedback">
+  <div class="page-head"><h2>Feedback</h2><p>Help us improve the advisor.</p></div>
+  <div class="gate" id="fb-gate"></div>
+  <form class="card narrow" id="fb-form">
+    <label class="lbl">How would you rate your experience?</label>
+    <div class="stars" id="stars"></div>
+    <label class="lbl">Comments or suggestions <small>(optional)</small></label>
+    <textarea id="fb-comment" rows="4" maxlength="1000" placeholder="What worked? What should be better?"></textarea>
+    <button class="btn primary" type="submit">Send feedback</button>
+  </form>
+</section>
+</main>
+
+<!-- course drawer -->
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-bg" data-close></div>
+  <div class="drawer-panel">
+    <button class="x" data-close aria-label="Close">×</button>
+    <div id="drawer-body"></div>
+  </div>
+</aside>
+
+<!-- login modal -->
+<div class="modal" id="login-modal" aria-hidden="true">
+  <div class="drawer-bg" data-close></div>
+  <form class="modal-card" id="login-form">
+    <button type="button" class="x" data-close aria-label="Close">×</button>
+    <img src="img/aastu_logo.jpg" alt="">
+    <h3>Welcome 👋</h3>
+    <p>Enter your student ID to continue. New here? We'll create your profile automatically.</p>
+    <input id="login-id" placeholder="ETS/1444/13" required>
+    <div class="form-err" id="login-err"></div>
+    <button class="btn primary block" type="submit">Continue</button>
+  </form>
+</div>
+
+<div id="toast"></div>
+<footer class="foot">Plans are computed by the department reasoning engine and should be verified with the registrar. · <a href="http://localhost:5001/login">Admin</a></footer>
+<script src="app.js"></script>
+</body>
+</html>
